@@ -296,6 +296,7 @@ export class TelegramPlugin extends BasePlugin {
       '📊 Status': { type: 'system', action: 'session.status' },
       '❓ Help': { type: 'system', action: 'help.show' },
       '🔄 Agent': { type: 'system', action: 'agent.show' },
+      '⏰ Schedule': { type: 'system', action: 'cron.show' },
       '🔄 Refresh Status': { type: 'platform', action: 'pairing.check' },
     };
 
@@ -422,10 +423,24 @@ export class TelegramPlugin extends BasePlugin {
       // 其他回调类型的处理
       // Handle other callback types
       const action = extractAction(data);
+      // For 'action:cron.show' pattern, actionName should be 'cron.show' (strip category prefix)
+      const actionName = category === 'action' ? action : `${category}.${action}`;
+      // Parse extra params from callback data (e.g., 'action:cron.delete:jobId=xxx' or 'action:cron.reschedule.confirm:jobId=xxx&presetKey=yyy')
+      const callbackParts = data.split(':');
+      const extraParams: Record<string, string> = { originalMessageId: ctx.callbackQuery?.message?.message_id?.toString() || '' };
+      if (callbackParts.length > 2) {
+        for (const part of callbackParts.slice(2)) {
+          const subParts = part.split('&');
+          for (const subPart of subParts) {
+            const [key, val] = subPart.split('=');
+            if (key && val) extraParams[key] = val;
+          }
+        }
+      }
       unifiedMessage.action = {
         type: category === 'pairing' ? 'platform' : category === 'action' || category === 'session' ? 'system' : 'chat',
-        name: `${category}.${action}`,
-        params: { originalMessageId: ctx.callbackQuery?.message?.message_id?.toString() },
+        name: actionName,
+        params: extraParams,
       };
 
       // Don't await - process in background

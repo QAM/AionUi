@@ -130,6 +130,12 @@ export function createMainMenuCard(): LarkCard {
           },
           {
             tag: 'button',
+            text: { tag: 'plain_text', content: '⏰ Schedule' },
+            type: 'default',
+            value: { action: 'cron.show' },
+          },
+          {
+            tag: 'button',
             text: { tag: 'plain_text', content: '❓ Help' },
             type: 'default',
             value: { action: 'help.show' },
@@ -693,6 +699,151 @@ export function createTextCard(text: string, title?: string, template?: LarkCard
   }
 
   return card;
+}
+
+// ==================== Cron Cards ====================
+
+/**
+ * Create cron job status card with delete button
+ */
+export function createCronStatusCard(job: { id: string; name: string; scheduleDescription: string; enabled: boolean; nextRunAt?: string }): LarkCard {
+  const statusEmoji = job.enabled ? '🟢' : '🟡';
+  const lines = [`${statusEmoji} **${job.name}**`, `📅 ${job.scheduleDescription}`];
+  if (job.nextRunAt) lines.push(`⏭ Next: ${job.nextRunAt}`);
+
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: '⏰ Scheduled Task' },
+      template: 'green',
+    },
+    elements: [
+      { tag: 'markdown', content: lines.join('\n') },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: { tag: 'plain_text', content: '🗑 Delete' },
+            type: 'danger',
+            value: { action: 'cron.delete', jobId: job.id },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Create cron schedule preset selection card
+ */
+export function createCronPresetsCard(): LarkCard {
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: '⏰ Create Scheduled Task' },
+      template: 'blue',
+    },
+    elements: [
+      { tag: 'markdown', content: 'Select a schedule:' },
+      {
+        tag: 'action',
+        actions: [
+          { tag: 'button', text: { tag: 'plain_text', content: 'Every Hour' }, type: 'default', value: { action: 'cron.create.schedule', presetKey: 'everyHour' } },
+          { tag: 'button', text: { tag: 'plain_text', content: 'Every 6 Hours' }, type: 'default', value: { action: 'cron.create.schedule', presetKey: 'every6Hours' } },
+        ],
+      },
+      {
+        tag: 'action',
+        actions: [
+          { tag: 'button', text: { tag: 'plain_text', content: 'Daily 9 AM' }, type: 'default', value: { action: 'cron.create.schedule', presetKey: 'dailyMorning' } },
+          { tag: 'button', text: { tag: 'plain_text', content: 'Daily 6 PM' }, type: 'default', value: { action: 'cron.create.schedule', presetKey: 'dailyEvening' } },
+        ],
+      },
+      {
+        tag: 'action',
+        actions: [{ tag: 'button', text: { tag: 'plain_text', content: 'Weekly Monday' }, type: 'default', value: { action: 'cron.create.schedule', presetKey: 'weeklyMonday' } }],
+      },
+    ],
+  };
+}
+
+/**
+ * Create cron job list card - shows all jobs across conversations with pause/resume + delete
+ */
+export function createCronJobListCard(jobs: Array<{ id: string; name: string; scheduleDescription: string; enabled: boolean; conversationTitle?: string; nextRunAt?: string }>): LarkCard {
+  const lines: string[] = [];
+  for (const job of jobs) {
+    const statusEmoji = job.enabled ? '🟢' : '🟡';
+    lines.push(`${statusEmoji} **${job.name}**`);
+    lines.push(`📅 ${job.scheduleDescription}`);
+    if (job.conversationTitle) lines.push(`💬 ${job.conversationTitle}`);
+    if (job.nextRunAt) lines.push(`⏭ Next: ${job.nextRunAt}`);
+    lines.push('');
+  }
+
+  const actionRows: LarkActionElement[] = [];
+  for (const job of jobs) {
+    const buttons: LarkButtonElement[] = [];
+    if (job.enabled) {
+      buttons.push({ tag: 'button', text: { tag: 'plain_text', content: `⏸ ${job.name}` }, type: 'default', value: { action: 'cron.pause', jobId: job.id } });
+    } else {
+      buttons.push({ tag: 'button', text: { tag: 'plain_text', content: `▶️ ${job.name}` }, type: 'primary', value: { action: 'cron.resume', jobId: job.id } });
+    }
+    buttons.push({ tag: 'button', text: { tag: 'plain_text', content: `📅 ${job.name}` }, type: 'default', value: { action: 'cron.reschedule', jobId: job.id } });
+    buttons.push({ tag: 'button', text: { tag: 'plain_text', content: `🗑 ${job.name}` }, type: 'danger', value: { action: 'cron.delete', jobId: job.id } });
+    actionRows.push({ tag: 'action', actions: buttons });
+  }
+
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: `⏰ All Scheduled Tasks (${jobs.length})` },
+      template: 'green',
+    },
+    elements: [{ tag: 'markdown', content: lines.join('\n') }, { tag: 'hr' }, ...actionRows],
+  };
+}
+
+/**
+ * Create cron reschedule card - shows schedule presets for an existing job
+ */
+export function createCronRescheduleCard(jobId: string, jobName: string): LarkCard {
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: 'plain_text', content: `⏰ Reschedule: ${jobName}` },
+      template: 'blue',
+    },
+    elements: [
+      { tag: 'markdown', content: 'Select a new schedule:' },
+      {
+        tag: 'action',
+        actions: [
+          { tag: 'button', text: { tag: 'plain_text', content: 'Every Hour' }, type: 'default', value: { action: 'cron.reschedule.confirm', jobId, presetKey: 'everyHour' } },
+          { tag: 'button', text: { tag: 'plain_text', content: 'Every 6 Hours' }, type: 'default', value: { action: 'cron.reschedule.confirm', jobId, presetKey: 'every6Hours' } },
+        ],
+      },
+      {
+        tag: 'action',
+        actions: [
+          { tag: 'button', text: { tag: 'plain_text', content: 'Daily 9 AM' }, type: 'default', value: { action: 'cron.reschedule.confirm', jobId, presetKey: 'dailyMorning' } },
+          { tag: 'button', text: { tag: 'plain_text', content: 'Daily 6 PM' }, type: 'default', value: { action: 'cron.reschedule.confirm', jobId, presetKey: 'dailyEvening' } },
+        ],
+      },
+      {
+        tag: 'action',
+        actions: [
+          { tag: 'button', text: { tag: 'plain_text', content: 'Weekly Monday' }, type: 'default', value: { action: 'cron.reschedule.confirm', jobId, presetKey: 'weeklyMonday' } },
+          { tag: 'button', text: { tag: 'plain_text', content: '✏️ Custom' }, type: 'default', value: { action: 'cron.reschedule.custom', jobId } },
+        ],
+      },
+      {
+        tag: 'action',
+        actions: [{ tag: 'button', text: { tag: 'plain_text', content: '← Back' }, type: 'default', value: { action: 'cron.show' } }],
+      },
+    ],
+  };
 }
 
 /**

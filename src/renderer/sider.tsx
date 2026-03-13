@@ -1,4 +1,4 @@
-import { ArrowCircleLeft, ListCheckbox, Plus, SettingTwo } from '@icon-park/react';
+import { AlarmClock, ArrowCircleLeft, ListCheckbox, Plus, SettingTwo } from '@icon-park/react';
 import { IconMoonFill, IconSunFill } from '@arco-design/web-react/icon';
 import classNames from 'classnames';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
@@ -134,6 +134,27 @@ const Sider: React.FC<SiderProps> = ({ onSessionClick, collapsed = false }) => {
                 <span className='collapsed-hidden text-t-primary'>
                   {t('settings.theme')} · {theme === 'dark' ? t('settings.darkMode') : t('settings.lightMode')}
                 </span>
+              </div>
+            </Tooltip>
+          )}
+          {!isSettings && (
+            <Tooltip {...siderTooltipProps} content={t('cron.allScheduledTasks')} position='right'>
+              <div
+                onClick={() => {
+                  cleanupSiderTooltips();
+                  blurActiveElement();
+                  void navigate('/cron');
+                  if (onSessionClick) {
+                    onSessionClick();
+                  }
+                }}
+                className={classNames('flex items-center justify-start gap-10px px-12px py-8px rd-0.5rem cursor-pointer transition-colors', isMobile && 'sider-footer-btn-mobile', {
+                  'bg-[rgba(var(--primary-6),0.12)] text-primary': pathname === '/cron',
+                  'hover:bg-hover active:bg-fill-2': pathname !== '/cron',
+                })}
+              >
+                <AlarmClock className='flex' theme='outline' size='22' fill={pathname === '/cron' ? iconColors.primary : iconColors.secondary} />
+                <span className='collapsed-hidden text-t-primary'>{t('cron.allScheduledTasks')}</span>
               </div>
             </Tooltip>
           )}

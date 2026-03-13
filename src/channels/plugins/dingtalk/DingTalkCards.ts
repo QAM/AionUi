@@ -84,7 +84,7 @@ export function createMainMenuCard(): DingTalkCard {
     title: 'AionUi Assistant',
     text: '### AionUi Assistant\n\nWelcome! Choose an action below:',
     btnOrientation: '1',
-    btns: [btn('New Chat', 'session.new'), btn('Agent', 'agent.show'), btn('Status', 'session.status'), btn('Help', 'help.show')],
+    btns: [btn('New Chat', 'session.new'), btn('Agent', 'agent.show'), btn('Status', 'session.status'), btn('Schedule', 'cron.show'), btn('Help', 'help.show')],
   };
 }
 
@@ -258,6 +258,80 @@ export function createSettingsCard(): DingTalkCard {
     title: 'Settings',
     text: ['### Settings', '', 'Channel settings need to be configured in the AionUi app.', '', 'Open AionUi > WebUI > Channels'].join('\n'),
     btns: [btn('Back', 'help.show')],
+  };
+}
+
+// ==================== Cron Cards ====================
+
+/**
+ * Create cron job status card with delete button
+ */
+export function createCronStatusCard(job: { id: string; name: string; scheduleDescription: string; enabled: boolean; nextRunAt?: string }): DingTalkCard {
+  const statusEmoji = job.enabled ? '🟢' : '🟡';
+  const lines = ['### Scheduled Task', '', `${statusEmoji} **${job.name}**`, `- Schedule: ${job.scheduleDescription}`];
+  if (job.nextRunAt) lines.push(`- Next: ${job.nextRunAt}`);
+
+  return {
+    title: 'Scheduled Task',
+    text: lines.join('\n'),
+    btns: [btn('Delete Task', 'cron.delete', { jobId: job.id })],
+  };
+}
+
+/**
+ * Create cron schedule preset selection card
+ */
+export function createCronPresetsCard(): DingTalkCard {
+  return {
+    title: 'Create Scheduled Task',
+    text: '### Create Scheduled Task\n\nSelect a schedule:',
+    btnOrientation: '0',
+    btns: [btn('Every Hour', 'cron.create.schedule', { presetKey: 'everyHour' }), btn('Every 6 Hours', 'cron.create.schedule', { presetKey: 'every6Hours' }), btn('Daily 9 AM', 'cron.create.schedule', { presetKey: 'dailyMorning' }), btn('Daily 6 PM', 'cron.create.schedule', { presetKey: 'dailyEvening' }), btn('Weekly Monday', 'cron.create.schedule', { presetKey: 'weeklyMonday' })],
+  };
+}
+
+/**
+ * Create cron job list card - shows all jobs across conversations with pause/resume + delete
+ */
+export function createCronJobListCard(jobs: Array<{ id: string; name: string; scheduleDescription: string; enabled: boolean; conversationTitle?: string; nextRunAt?: string }>): DingTalkCard {
+  const lines = [`### All Scheduled Tasks (${jobs.length})`, ''];
+  for (const job of jobs) {
+    const statusEmoji = job.enabled ? '🟢' : '🟡';
+    lines.push(`${statusEmoji} **${job.name}**`);
+    lines.push(`- Schedule: ${job.scheduleDescription}`);
+    if (job.conversationTitle) lines.push(`- Chat: ${job.conversationTitle}`);
+    if (job.nextRunAt) lines.push(`- Next: ${job.nextRunAt}`);
+    lines.push('');
+  }
+
+  const buttons: DingTalkButton[] = [];
+  for (const job of jobs) {
+    if (job.enabled) {
+      buttons.push(btn(`⏸ ${job.name}`, 'cron.pause', { jobId: job.id }));
+    } else {
+      buttons.push(btn(`▶️ ${job.name}`, 'cron.resume', { jobId: job.id }));
+    }
+    buttons.push(btn(`📅 ${job.name}`, 'cron.reschedule', { jobId: job.id }));
+    buttons.push(btn(`🗑 ${job.name}`, 'cron.delete', { jobId: job.id }));
+  }
+
+  return {
+    title: 'All Scheduled Tasks',
+    text: lines.join('\n'),
+    btnOrientation: '0',
+    btns: buttons,
+  };
+}
+
+/**
+ * Create cron reschedule card - shows schedule presets for an existing job
+ */
+export function createCronRescheduleCard(jobId: string, jobName: string): DingTalkCard {
+  return {
+    title: `Reschedule: ${jobName}`,
+    text: `### Reschedule: ${jobName}\n\nSelect a new schedule:`,
+    btnOrientation: '0',
+    btns: [btn('Every Hour', 'cron.reschedule.confirm', { jobId, presetKey: 'everyHour' }), btn('Every 6 Hours', 'cron.reschedule.confirm', { jobId, presetKey: 'every6Hours' }), btn('Daily 9 AM', 'cron.reschedule.confirm', { jobId, presetKey: 'dailyMorning' }), btn('Daily 6 PM', 'cron.reschedule.confirm', { jobId, presetKey: 'dailyEvening' }), btn('Weekly Monday', 'cron.reschedule.confirm', { jobId, presetKey: 'weeklyMonday' }), btn('✏️ Custom', 'cron.reschedule.custom', { jobId })],
   };
 }
 

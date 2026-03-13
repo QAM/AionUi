@@ -182,6 +182,15 @@ export interface IChannelSession {
   chatId?: string; // Channel chat isolation ID (e.g. user:xxx, group:xxx)
   createdAt: number;
   lastActivity: number;
+  /** Transient: pending cron job creation (preset selected, awaiting message) */
+  pendingCronCreate?: {
+    presetKey: string;
+    schedule: import('@/common/ipcBridge').ICronSchedule;
+  };
+  /** Transient: pending cron reschedule (awaiting custom cron expression) */
+  pendingCronReschedule?: {
+    jobId: string;
+  };
 }
 
 /**

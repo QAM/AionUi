@@ -131,7 +131,7 @@ const GeminiConversationPanel: React.FC<{ conversation: GeminiConversation; slid
     siderTitle: sliderTitle,
     sider: <ChatSider conversation={conversation} />,
     headerLeft: <GeminiModelSelector selection={modelSelection} />,
-    headerExtra: <CronJobManager conversationId={conversation.id} />,
+    headerExtra: <CronJobManager conversationId={conversation.id} agentType='gemini' conversationTitle={conversation.name} />,
     workspaceEnabled,
     backend: 'gemini' as const,
     // 传递预设助手信息 / Pass preset assistant info
@@ -220,7 +220,7 @@ const ChatConversation: React.FC<{
         };
 
   return (
-    <ChatLayout title={conversation?.name} {...chatLayoutProps} headerLeft={modelSelector} headerExtra={conversation ? <CronJobManager conversationId={conversation.id} /> : undefined} siderTitle={sliderTitle} sider={<ChatSider conversation={conversation} />} workspaceEnabled={workspaceEnabled} conversationId={conversation?.id}>
+    <ChatLayout title={conversation?.name} {...chatLayoutProps} headerLeft={modelSelector} headerExtra={conversation ? <CronJobManager conversationId={conversation.id} agentType={conversation.type === 'acp' ? conversation.extra?.backend || 'claude' : conversation.type === 'codex' ? 'codex' : conversation.type === 'openclaw-gateway' ? 'openclaw-gateway' : conversation.type === 'nanobot' ? 'nanobot' : 'gemini'} conversationTitle={conversation.name} /> : undefined} siderTitle={sliderTitle} sider={<ChatSider conversation={conversation} />} workspaceEnabled={workspaceEnabled} conversationId={conversation?.id}>
       {conversationNode}
     </ChatLayout>
   );

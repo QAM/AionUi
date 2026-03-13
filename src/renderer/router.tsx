@@ -15,6 +15,7 @@ const ToolsSettings = React.lazy(() => import('./pages/settings/ToolsSettings'))
 const WebuiSettings = React.lazy(() => import('./pages/settings/WebuiSettings'));
 const ExtensionSettingsPage = React.lazy(() => import('./pages/settings/ExtensionSettingsPage'));
 const LoginPage = React.lazy(() => import('./pages/login'));
+const CronJobsPage = React.lazy(() => import('./pages/cron/CronJobsPage'));
 const ComponentsShowcase = React.lazy(() => import('./pages/test/ComponentsShowcase'));
 
 const withRouteFallback = (Component: React.LazyExoticComponent<React.ComponentType>) => (
@@ -58,6 +59,7 @@ const PanelRoute: React.FC<{ layout: React.ReactElement }> = ({ layout }) => {
           <Route path='/settings/tools' element={withRouteFallback(ToolsSettings)} />
           <Route path='/settings/ext/:tabId' element={withRouteFallback(ExtensionSettingsPage)} />
           <Route path='/settings' element={<Navigate to='/settings/gemini' replace />} />
+          <Route path='/cron' element={withRouteFallback(CronJobsPage)} />
           <Route path='/test/components' element={withRouteFallback(ComponentsShowcase)} />
         </Route>
         <Route path='*' element={<Navigate to={status === 'authenticated' ? '/guid' : '/login'} replace />} />
