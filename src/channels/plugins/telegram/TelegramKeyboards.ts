@@ -23,7 +23,7 @@ import type { ChannelAgentType } from '../../types';
  * Displayed persistently below the message input
  */
 export function createMainMenuKeyboard(): Keyboard {
-  return new Keyboard().text('🆕 New Chat').text('🔄 Agent').row().text('📊 Status').text('❓ Help').resized().persistent();
+  return new Keyboard().text('🆕 New Chat').text('🔄 Agent').row().text('📊 Status').text('⏰ Schedule').text('❓ Help').resized().persistent();
 }
 
 /**
@@ -135,6 +135,55 @@ export function createToolConfirmationKeyboard(callId: string, options: Array<{ 
     }
   }
   return keyboard;
+}
+
+// ==================== Cron Keyboards ====================
+
+/**
+ * Cron status keyboard - shows job details with delete button
+ */
+export function createCronStatusKeyboard(job: { id: string; name: string; scheduleDescription: string; enabled: boolean; nextRunAt?: string }): InlineKeyboard {
+  return new InlineKeyboard().text('🗑 Delete Task', `action:cron.delete:jobId=${job.id}`).row().text('← Back', 'action:cron.show');
+}
+
+/**
+ * Cron schedule presets keyboard for task creation
+ */
+export function createCronPresetsKeyboard(): InlineKeyboard {
+  return new InlineKeyboard().text('Every Hour', 'action:cron.create.schedule:presetKey=everyHour').text('Every 6 Hours', 'action:cron.create.schedule:presetKey=every6Hours').row().text('Daily 9 AM', 'action:cron.create.schedule:presetKey=dailyMorning').text('Daily 6 PM', 'action:cron.create.schedule:presetKey=dailyEvening').row().text('Weekly Monday', 'action:cron.create.schedule:presetKey=weeklyMonday');
+}
+
+/**
+ * Cron job list keyboard - shows all jobs with pause/resume and delete buttons
+ */
+export function createCronJobListKeyboard(jobs: Array<{ id: string; name: string; scheduleDescription: string; enabled: boolean; conversationTitle?: string; nextRunAt?: string }>): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  for (let i = 0; i < jobs.length; i++) {
+    const job = jobs[i];
+    const statusEmoji = job.enabled ? '🟢' : '🟡';
+    const label = `${statusEmoji} ${job.name} · ${job.scheduleDescription}`;
+
+    if (i > 0) keyboard.row();
+    keyboard.text(label, `action:cron.show`);
+    keyboard.row();
+    if (job.enabled) {
+      keyboard.text('⏸ Pause', `action:cron.pause:jobId=${job.id}`);
+    } else {
+      keyboard.text('▶️ Resume', `action:cron.resume:jobId=${job.id}`);
+    }
+    keyboard.text('📅 Reschedule', `action:cron.reschedule:jobId=${job.id}`);
+    keyboard.text('🗑 Delete', `action:cron.delete:jobId=${job.id}`);
+  }
+
+  return keyboard;
+}
+
+/**
+ * Cron reschedule keyboard - shows schedule presets for an existing job
+ */
+export function createCronRescheduleKeyboard(jobId: string): InlineKeyboard {
+  return new InlineKeyboard().text('Every Hour', `action:cron.reschedule.confirm:jobId=${jobId}&presetKey=everyHour`).text('Every 6 Hours', `action:cron.reschedule.confirm:jobId=${jobId}&presetKey=every6Hours`).row().text('Daily 9 AM', `action:cron.reschedule.confirm:jobId=${jobId}&presetKey=dailyMorning`).text('Daily 6 PM', `action:cron.reschedule.confirm:jobId=${jobId}&presetKey=dailyEvening`).row().text('Weekly Monday', `action:cron.reschedule.confirm:jobId=${jobId}&presetKey=weeklyMonday`).text('✏️ Custom', `action:cron.reschedule.custom:jobId=${jobId}`).row().text('← Back', 'action:cron.show');
 }
 
 // ==================== Keyboard Utilities ====================

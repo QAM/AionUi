@@ -95,6 +95,7 @@ export function createMainMenuBlocks(): SlackBlock[] {
         { type: 'button', text: { type: 'plain_text', text: '🆕 New Chat', emoji: true }, action_id: 'session:new' },
         { type: 'button', text: { type: 'plain_text', text: '🔄 Agent', emoji: true }, action_id: 'action:agent.show' },
         { type: 'button', text: { type: 'plain_text', text: '📊 Status', emoji: true }, action_id: 'action:session.status' },
+        { type: 'button', text: { type: 'plain_text', text: '⏰ Schedule', emoji: true }, action_id: 'action:cron.show' },
         { type: 'button', text: { type: 'plain_text', text: '❓ Help', emoji: true }, action_id: 'action:help.show' },
       ],
     },
@@ -153,6 +154,97 @@ export function createErrorRecoveryBlocks(errorMessage?: string): SlackBlock[] {
   });
 
   return blocks;
+}
+
+// ==================== Cron Blocks ====================
+
+/**
+ * Create cron job status blocks with delete button
+ */
+export function createCronStatusBlocks(job: { id: string; name: string; scheduleDescription: string; enabled: boolean; nextRunAt?: string }): SlackBlock[] {
+  const statusEmoji = job.enabled ? '🟢' : '🟡';
+  const lines = [`*⏰ Scheduled Task*`, '', `${statusEmoji} *${job.name}*`, `📅 ${job.scheduleDescription}`];
+  if (job.nextRunAt) lines.push(`⏭ Next: ${job.nextRunAt}`);
+
+  return [
+    { type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } },
+    { type: 'divider' },
+    {
+      type: 'actions',
+      elements: [{ type: 'button', text: { type: 'plain_text', text: '🗑 Delete', emoji: true }, action_id: `action:cron.delete`, value: job.id, style: 'danger' }],
+    },
+  ];
+}
+
+/**
+ * Create cron schedule preset selection blocks
+ */
+export function createCronPresetsBlocks(): SlackBlock[] {
+  return [
+    { type: 'section', text: { type: 'mrkdwn', text: '*⏰ Create Scheduled Task*\n\nSelect a schedule:' } },
+    {
+      type: 'actions',
+      elements: [
+        { type: 'button', text: { type: 'plain_text', text: 'Every Hour', emoji: true }, action_id: 'action:cron.create.schedule:presetKey=everyHour', value: 'everyHour' },
+        { type: 'button', text: { type: 'plain_text', text: 'Every 6 Hours', emoji: true }, action_id: 'action:cron.create.schedule:presetKey=every6Hours', value: 'every6Hours' },
+        { type: 'button', text: { type: 'plain_text', text: 'Daily 9 AM', emoji: true }, action_id: 'action:cron.create.schedule:presetKey=dailyMorning', value: 'dailyMorning' },
+        { type: 'button', text: { type: 'plain_text', text: 'Daily 6 PM', emoji: true }, action_id: 'action:cron.create.schedule:presetKey=dailyEvening', value: 'dailyEvening' },
+        { type: 'button', text: { type: 'plain_text', text: 'Weekly Monday', emoji: true }, action_id: 'action:cron.create.schedule:presetKey=weeklyMonday', value: 'weeklyMonday' },
+      ],
+    },
+  ];
+}
+
+/**
+ * Create cron job list blocks - shows all jobs across conversations with pause/resume + delete
+ */
+export function createCronJobListBlocks(jobs: Array<{ id: string; name: string; scheduleDescription: string; enabled: boolean; conversationTitle?: string; nextRunAt?: string }>): SlackBlock[] {
+  const blocks: SlackBlock[] = [{ type: 'section', text: { type: 'mrkdwn', text: `*⏰ All Scheduled Tasks* (${jobs.length})` } }, { type: 'divider' }];
+
+  for (const job of jobs) {
+    const statusEmoji = job.enabled ? '🟢' : '🟡';
+    const lines = [`${statusEmoji} *${job.name}*`, `📅 ${job.scheduleDescription}`];
+    if (job.conversationTitle) lines.push(`💬 ${job.conversationTitle}`);
+    if (job.nextRunAt) lines.push(`⏭ Next: ${job.nextRunAt}`);
+
+    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: lines.join('\n') } });
+
+    const buttons: SlackButtonElement[] = [];
+    if (job.enabled) {
+      buttons.push({ type: 'button', text: { type: 'plain_text', text: '⏸ Pause', emoji: true }, action_id: `action:cron.pause:jobId=${job.id}`, value: job.id });
+    } else {
+      buttons.push({ type: 'button', text: { type: 'plain_text', text: '▶️ Resume', emoji: true }, action_id: `action:cron.resume:jobId=${job.id}`, value: job.id });
+    }
+    buttons.push({ type: 'button', text: { type: 'plain_text', text: '📅 Reschedule', emoji: true }, action_id: `action:cron.reschedule:jobId=${job.id}`, value: job.id });
+    buttons.push({ type: 'button', text: { type: 'plain_text', text: '🗑 Delete', emoji: true }, action_id: `action:cron.delete:jobId=${job.id}`, value: job.id, style: 'danger' });
+
+    blocks.push({ type: 'actions', elements: buttons });
+  }
+
+  return blocks;
+}
+
+/**
+ * Create cron reschedule blocks - shows schedule presets for an existing job
+ */
+export function createCronRescheduleBlocks(jobId: string, jobName: string): SlackBlock[] {
+  return [
+    { type: 'section', text: { type: 'mrkdwn', text: `*⏰ Reschedule: ${jobName}*\n\nSelect a new schedule:` } },
+    {
+      type: 'actions',
+      elements: [
+        { type: 'button', text: { type: 'plain_text', text: 'Every Hour', emoji: true }, action_id: `action:cron.reschedule.confirm:jobId=${jobId}&presetKey=everyHour`, value: jobId },
+        { type: 'button', text: { type: 'plain_text', text: 'Every 6 Hours', emoji: true }, action_id: `action:cron.reschedule.confirm:jobId=${jobId}&presetKey=every6Hours`, value: jobId },
+        { type: 'button', text: { type: 'plain_text', text: 'Daily 9 AM', emoji: true }, action_id: `action:cron.reschedule.confirm:jobId=${jobId}&presetKey=dailyMorning`, value: jobId },
+        { type: 'button', text: { type: 'plain_text', text: 'Daily 6 PM', emoji: true }, action_id: `action:cron.reschedule.confirm:jobId=${jobId}&presetKey=dailyEvening`, value: jobId },
+        { type: 'button', text: { type: 'plain_text', text: 'Weekly Monday', emoji: true }, action_id: `action:cron.reschedule.confirm:jobId=${jobId}&presetKey=weeklyMonday`, value: jobId },
+      ],
+    },
+    {
+      type: 'actions',
+      elements: [{ type: 'button', text: { type: 'plain_text', text: '✏️ Custom', emoji: true }, action_id: `action:cron.reschedule.custom:jobId=${jobId}`, value: jobId }],
+    },
+  ];
 }
 
 // ==================== Action Parsing ====================

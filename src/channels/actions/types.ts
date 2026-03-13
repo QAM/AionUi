@@ -86,6 +86,21 @@ export const ChatActionNames = {
 } as const;
 
 /**
+ * Cron action names
+ */
+export const CronActionNames = {
+  CRON_SHOW: 'cron.show',
+  CRON_CREATE: 'cron.create',
+  CRON_CREATE_SCHEDULE: 'cron.create.schedule',
+  CRON_DELETE: 'cron.delete',
+  CRON_PAUSE: 'cron.pause',
+  CRON_RESUME: 'cron.resume',
+  CRON_RESCHEDULE: 'cron.reschedule',
+  CRON_RESCHEDULE_CONFIRM: 'cron.reschedule.confirm',
+  CRON_RESCHEDULE_CUSTOM: 'cron.reschedule.custom',
+} as const;
+
+/**
  * Platform action names (Telegram-specific)
  */
 export const PlatformActionNames = {

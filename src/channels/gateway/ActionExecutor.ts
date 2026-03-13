@@ -9,6 +9,7 @@ import { getDatabase } from '@/process/database';
 import { ProcessConfig } from '@/process/initStorage';
 import { ConversationService } from '@/process/services/conversationService';
 import { buildChatErrorResponse, chatActions } from '../actions/ChatActions';
+import { cronActions } from '../actions/CronActions';
 import { handlePairingShow, platformActions } from '../actions/PlatformActions';
 import { getChannelDefaultModel, systemActions } from '../actions/SystemActions';
 import type { IActionContext, IRegisteredAction } from '../actions/types';
@@ -490,8 +491,22 @@ export class ActionExecutor {
         // Action encoded in content
         await this.executeAction(context, content.text, {});
       } else if (content.type === 'text' && content.text) {
-        // Regular text message - send to AI
-        await this.handleChatMessage(context, content.text);
+        // Check for pending cron reschedule (user typed a custom cron expression)
+        const rescheduleHandled = await this.handlePendingCronReschedule(context, content.text);
+        if (rescheduleHandled) return;
+
+        // Check for pending cron creation (user typed the message for the scheduled task)
+        const pendingHandled = await this.handlePendingCronCreate(context, content.text);
+        if (!pendingHandled) {
+          // Check for text keyword shortcuts (e.g., "schedule", "menu", "help")
+          const keywordAction = this.matchTextKeyword(content.text);
+          if (keywordAction) {
+            await this.executeAction(context, keywordAction);
+          } else {
+            // Regular text message - send to AI
+            await this.handleChatMessage(context, content.text);
+          }
+        }
       } else {
         // Unsupported content type
         await context.sendMessage({
@@ -819,6 +834,147 @@ export class ActionExecutor {
   }
 
   /**
+   * Handle pending cron creation: if user has selected a schedule preset,
+   * their next text message becomes the cron job message.
+   * Returns true if the message was consumed as a cron creation.
+   */
+  private async handlePendingCronCreate(context: IActionContext, text: string): Promise<boolean> {
+    const userId = context.channelUser?.id;
+    if (!userId || !context.conversationId) return false;
+
+    const session = this.sessionManager.getSession(userId, context.chatId);
+    if (!session?.pendingCronCreate) return false;
+
+    const { schedule } = session.pendingCronCreate;
+    // Clear the pending state
+    session.pendingCronCreate = undefined;
+
+    try {
+      const { cronService } = await import('@/process/services/cron/CronService');
+      await cronService.addJob({
+        name: text.slice(0, 50),
+        schedule,
+        message: text,
+        conversationId: context.conversationId,
+        agentType: session.agentType as any,
+        createdBy: 'user',
+      });
+
+      await context.sendMessage({
+        type: 'text',
+        text: `✅ <b>Scheduled task created!</b>\n\n📝 ${text.slice(0, 100)}${text.length > 100 ? '...' : ''}\n⏰ ${schedule.description}`,
+        parseMode: 'HTML',
+      });
+      return true;
+    } catch (err) {
+      await context.sendMessage({
+        type: 'text',
+        text: `❌ Failed to create scheduled task: ${err instanceof Error ? err.message : String(err)}`,
+        parseMode: 'HTML',
+      });
+      return true;
+    }
+  }
+
+  /**
+   * Handle pending cron reschedule: user typed a custom cron expression.
+   * Returns true if the message was consumed.
+   */
+  private async handlePendingCronReschedule(context: IActionContext, text: string): Promise<boolean> {
+    const userId = context.channelUser?.id;
+    if (!userId) return false;
+
+    const session = this.sessionManager.getSession(userId, context.chatId);
+    if (!session?.pendingCronReschedule) return false;
+
+    const { jobId } = session.pendingCronReschedule;
+    session.pendingCronReschedule = undefined;
+
+    const cronExpr = text.trim();
+    // Basic validation: should look like a cron expression (5 space-separated fields)
+    if (!/^[\d*,\-/\s]+$/.test(cronExpr) || cronExpr.split(/\s+/).length < 5) {
+      await context.sendMessage({
+        type: 'text',
+        text: '❌ Invalid cron expression. Expected 5 fields like: <code>0 */2 * * *</code>\n\nType <b>schedule</b> to go back.',
+        parseMode: 'HTML',
+      });
+      return true;
+    }
+
+    try {
+      const { cronService } = await import('@/process/services/cron/CronService');
+      await cronService.updateJob(jobId, {
+        schedule: {
+          kind: 'cron',
+          expr: cronExpr,
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          description: cronExpr,
+        },
+      });
+
+      // Re-show updated list
+      const allJobs = await cronService.listJobs();
+      const { default: dayjs } = await import('dayjs');
+      const jobItems = allJobs.map((job) => ({
+        id: job.id,
+        name: job.name,
+        scheduleDescription: job.schedule.description,
+        enabled: job.enabled,
+        conversationTitle: job.metadata.conversationTitle,
+        nextRunAt: job.state.nextRunAtMs ? dayjs(job.state.nextRunAtMs).format('YYYY-MM-DD HH:mm') : undefined,
+      }));
+
+      const { createCronJobListBlocks } = await import('../plugins/slack/SlackBlocks');
+      const { createCronJobListKeyboard } = await import('../plugins/telegram/TelegramKeyboards');
+      const { createCronJobListCard: createLarkList } = await import('../plugins/lark/LarkCards');
+      const { createCronJobListCard: createDingTalkList } = await import('../plugins/dingtalk/DingTalkCards');
+
+      let replyMarkup: unknown;
+      if (context.platform === 'slack') replyMarkup = createCronJobListBlocks(jobItems);
+      else if (context.platform === 'lark') replyMarkup = createLarkList(jobItems);
+      else if (context.platform === 'dingtalk') replyMarkup = createDingTalkList(jobItems);
+      else replyMarkup = createCronJobListKeyboard(jobItems);
+
+      await context.sendMessage({
+        type: 'text',
+        text: `✅ Schedule updated to: <code>${cronExpr}</code>`,
+        parseMode: 'HTML',
+        replyMarkup,
+      });
+      return true;
+    } catch (err) {
+      await context.sendMessage({
+        type: 'text',
+        text: `❌ Failed to reschedule: ${err instanceof Error ? err.message : String(err)}`,
+        parseMode: 'HTML',
+      });
+      return true;
+    }
+  }
+
+  /**
+   * Match text input to a known keyword shortcut
+   * Returns action name if matched, null otherwise
+   */
+  private matchTextKeyword(text: string): string | null {
+    const normalized = text.trim().toLowerCase();
+    const keywords: Record<string, string> = {
+      '⏰ schedule': 'cron.show',
+      schedule: 'cron.show',
+      cron: 'cron.show',
+      '📊 status': 'session.status',
+      status: 'session.status',
+      '🆕 new chat': 'session.new',
+      'new chat': 'session.new',
+      '❓ help': 'help.show',
+      help: 'help.show',
+      '🔄 agent': 'agent.show',
+      menu: 'help.show',
+    };
+    return keywords[normalized] ?? null;
+  }
+
+  /**
    * Get plugin instance for a message
    */
   private getPluginForMessage(message: IUnifiedIncomingMessage) {
@@ -838,6 +994,11 @@ export class ActionExecutor {
 
     // Register chat actions
     for (const action of chatActions) {
+      this.actionRegistry.set(action.name, action);
+    }
+
+    // Register cron actions
+    for (const action of cronActions) {
       this.actionRegistry.set(action.name, action);
     }
 

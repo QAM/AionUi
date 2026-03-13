@@ -352,6 +352,30 @@ export class SlackPlugin extends BasePlugin {
         const extractedAction = extractAction(actionId);
         const actionName = extractedCategory === 'action' ? extractedAction : `${extractedCategory}.${extractedAction}`;
 
+        // Extract params from action value and action_id extra segments
+        const actionParams: Record<string, string> = {};
+        const buttonValue = 'value' in action ? (action as any).value : undefined;
+        if (buttonValue) actionParams.value = buttonValue;
+        // Parse extra key=value from action_id (e.g., 'action:cron.delete:jobId=xxx' or 'action:cron.reschedule.confirm:jobId=xxx&presetKey=yyy')
+        const actionIdParts = actionId.split(':');
+        if (actionIdParts.length > 2) {
+          for (const part of actionIdParts.slice(2)) {
+            // Support both ':' and '&' as separators between key=value pairs
+            const subParts = part.split('&');
+            for (const subPart of subParts) {
+              const eqIdx = subPart.indexOf('=');
+              if (eqIdx > 0) actionParams[subPart.slice(0, eqIdx)] = subPart.slice(eqIdx + 1);
+            }
+          }
+        }
+        // Map 'value' to known param names for cron actions
+        if (actionName === 'cron.create.schedule' && buttonValue && !actionParams.presetKey) {
+          actionParams.presetKey = buttonValue;
+        }
+        if (actionName === 'cron.delete' && buttonValue && !actionParams.jobId) {
+          actionParams.jobId = buttonValue;
+        }
+
         const unifiedMessage = {
           id: messageTs || Date.now().toString(),
           platform: 'slack' as const,
@@ -362,6 +386,7 @@ export class SlackPlugin extends BasePlugin {
           action: {
             type: (extractedCategory === 'pairing' ? 'platform' : extractedCategory === 'action' || extractedCategory === 'session' ? 'system' : 'chat') as any,
             name: actionName,
+            params: Object.keys(actionParams).length > 0 ? actionParams : undefined,
           },
         };
 

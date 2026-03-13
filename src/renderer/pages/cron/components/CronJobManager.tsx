@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type { AcpBackendAll } from '@/types/acpTypes';
 import { iconColors } from '@/renderer/theme/colors';
-import { emitter } from '@/renderer/utils/emitter';
 import { Button, Popover, Tooltip } from '@arco-design/web-react';
 import { AlarmClock } from '@icon-park/react';
 import React, { useState } from 'react';
@@ -13,51 +13,54 @@ import { useTranslation } from 'react-i18next';
 import { useCronJobs } from '../hooks/useCronJobs';
 import { getJobStatusFlags } from '../utils/cronUtils';
 import CronJobDrawer from './CronJobDrawer';
+import CreateCronJobDrawer from './CreateCronJobDrawer';
 
 interface CronJobManagerProps {
   conversationId: string;
+  agentType?: AcpBackendAll;
+  conversationTitle?: string;
 }
 
 /**
  * Cron job manager component for ChatLayout headerExtra
  * Shows a single job per conversation with drawer for editing
  */
-const CronJobManager: React.FC<CronJobManagerProps> = ({ conversationId }) => {
+const CronJobManager: React.FC<CronJobManagerProps> = ({ conversationId, agentType = 'gemini', conversationTitle }) => {
   const { t } = useTranslation();
   const { jobs, loading, hasJobs, deleteJob, updateJob } = useCronJobs(conversationId);
   const [drawerVisible, setDrawerVisible] = useState(false);
+  const [createDrawerVisible, setCreateDrawerVisible] = useState(false);
 
   // Handle unconfigured state (no jobs)
   if (!hasJobs && !loading) {
-    const handleCreateClick = () => {
-      emitter.emit('sendbox.fill', t('cron.status.defaultPrompt'));
-    };
-
     return (
-      <Popover
-        trigger='hover'
-        position='bottom'
-        content={
-          <div className='flex flex-col gap-8px p-4px max-w-240px'>
-            <div className='text-13px text-t-secondary'>{t('cron.status.unconfiguredHint')}</div>
-            <Button type='primary' size='mini' onClick={handleCreateClick}>
-              {t('cron.status.createNow')}
-            </Button>
-          </div>
-        }
-      >
-        <Button
-          type='text'
-          size='small'
-          className='cron-job-manager-button chat-header-cron-pill'
-          icon={
-            <span className='inline-flex items-center gap-2px rounded-full px-8px py-2px bg-2'>
-              <AlarmClock theme='outline' size={16} fill={iconColors.disabled} />
-              <span className='ml-4px w-8px h-8px rounded-full bg-[#86909c]' />
-            </span>
+      <>
+        <Popover
+          trigger='hover'
+          position='bottom'
+          content={
+            <div className='flex flex-col gap-8px p-4px max-w-240px'>
+              <div className='text-13px text-t-secondary'>{t('cron.status.unconfiguredHint')}</div>
+              <Button type='primary' size='mini' onClick={() => setCreateDrawerVisible(true)}>
+                {t('cron.status.createNow')}
+              </Button>
+            </div>
           }
-        />
-      </Popover>
+        >
+          <Button
+            type='text'
+            size='small'
+            className='cron-job-manager-button chat-header-cron-pill'
+            icon={
+              <span className='inline-flex items-center gap-2px rounded-full px-8px py-2px bg-2'>
+                <AlarmClock theme='outline' size={16} fill={iconColors.disabled} />
+                <span className='ml-4px w-8px h-8px rounded-full bg-[#86909c]' />
+              </span>
+            }
+          />
+        </Popover>
+        <CreateCronJobDrawer visible={createDrawerVisible} conversationId={conversationId} agentType={agentType} conversationTitle={conversationTitle} onClose={() => setCreateDrawerVisible(false)} />
+      </>
     );
   }
 
