@@ -42,7 +42,7 @@ export async function getChannelDefaultModel(platform: PluginType): Promise<TPro
     };
 
     // Try to get saved model selection
-    const savedModel = platform === 'lark' ? await ProcessConfig.get('assistant.lark.defaultModel') : platform === 'dingtalk' ? await ProcessConfig.get('assistant.dingtalk.defaultModel') : await ProcessConfig.get('assistant.telegram.defaultModel');
+    const savedModel = platform === 'lark' ? await ProcessConfig.get('assistant.lark.defaultModel') : platform === 'dingtalk' ? await ProcessConfig.get('assistant.dingtalk.defaultModel') : platform === 'slack' ? await ProcessConfig.get('assistant.slack.defaultModel') : await ProcessConfig.get('assistant.telegram.defaultModel');
     if (savedModel?.id && savedModel?.useModel) {
       // Google Auth is frontend-only (OAuth browser flow), not usable in channels.
       // Fall through to find a provider with a valid API key instead.

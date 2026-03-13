@@ -115,6 +115,17 @@ export interface IConfigStorageRefer {
     customAgentId?: string;
     name?: string;
   };
+  // Slack assistant default model / Slack 助手默认模型
+  'assistant.slack.defaultModel'?: {
+    id: string;
+    useModel: string;
+  };
+  // Slack assistant agent selection / Slack 助手所使用的 Agent
+  'assistant.slack.agent'?: {
+    backend: AcpBackendAll;
+    customAgentId?: string;
+    name?: string;
+  };
 }
 
 export interface IEnvStorageRefer {

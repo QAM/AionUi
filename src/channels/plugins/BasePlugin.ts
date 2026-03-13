@@ -18,8 +18,9 @@ export type PluginMessageHandler = (message: IUnifiedIncomingMessage) => Promise
  * @param platform - Platform type (telegram, etc.)
  * @param callId - Tool call ID
  * @param value - Confirmation value
+ * @param chatId - Optional chat ID (for thread-scoped sessions like Slack)
  */
-export type PluginConfirmHandler = (userId: string, platform: string, callId: string, value: string) => Promise<void>;
+export type PluginConfirmHandler = (userId: string, platform: string, callId: string, value: string, chatId?: string) => Promise<void>;
 
 /**
  * BasePlugin - Abstract base class for all platform plugins

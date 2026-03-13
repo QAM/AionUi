@@ -21,9 +21,10 @@ import ChannelItem from './channels/ChannelItem';
 import type { ChannelConfig } from './channels/types';
 import DingTalkConfigForm from './DingTalkConfigForm';
 import LarkConfigForm from './LarkConfigForm';
+import SlackConfigForm from './SlackConfigForm';
 import TelegramConfigForm from './TelegramConfigForm';
 
-type ChannelModelConfigKey = 'assistant.telegram.defaultModel' | 'assistant.lark.defaultModel' | 'assistant.dingtalk.defaultModel';
+type ChannelModelConfigKey = 'assistant.telegram.defaultModel' | 'assistant.lark.defaultModel' | 'assistant.dingtalk.defaultModel' | 'assistant.slack.defaultModel';
 
 type ExtensionFieldType = 'text' | 'password' | 'select' | 'number' | 'boolean';
 
@@ -143,9 +144,11 @@ const ChannelModalContent: React.FC = () => {
   const [pluginStatus, setPluginStatus] = useState<IChannelPluginStatus | null>(null);
   const [larkPluginStatus, setLarkPluginStatus] = useState<IChannelPluginStatus | null>(null);
   const [dingtalkPluginStatus, setDingtalkPluginStatus] = useState<IChannelPluginStatus | null>(null);
+  const [slackPluginStatus, setSlackPluginStatus] = useState<IChannelPluginStatus | null>(null);
   const [enableLoading, setEnableLoading] = useState(false);
   const [larkEnableLoading, setLarkEnableLoading] = useState(false);
   const [dingtalkEnableLoading, setDingtalkEnableLoading] = useState(false);
+  const [slackEnableLoading, setSlackEnableLoading] = useState(false);
   const [extensionStatuses, setExtensionStatuses] = useState<Record<string, IChannelPluginStatus>>({});
   const [extensionLoadingMap, setExtensionLoadingMap] = useState<Record<string, boolean>>({});
   const [extensionFieldValues, setExtensionFieldValues] = useState<ExtensionFieldValues>({});
@@ -167,6 +170,7 @@ const ChannelModalContent: React.FC = () => {
   const telegramModelSelection = useChannelModelSelection('assistant.telegram.defaultModel');
   const larkModelSelection = useChannelModelSelection('assistant.lark.defaultModel');
   const dingtalkModelSelection = useChannelModelSelection('assistant.dingtalk.defaultModel');
+  const slackModelSelection = useChannelModelSelection('assistant.slack.defaultModel');
 
   // Load plugin status
   const loadPluginStatus = useCallback(async () => {
@@ -176,11 +180,13 @@ const ChannelModalContent: React.FC = () => {
         const telegramPlugin = result.data.find((p) => p.type === 'telegram');
         const larkPlugin = result.data.find((p) => p.type === 'lark');
         const dingtalkPlugin = result.data.find((p) => p.type === 'dingtalk');
+        const slackPlugin = result.data.find((p) => p.type === 'slack');
         const extensionPlugins = result.data.filter((p) => !BUILTIN_CHANNEL_TYPES.has(p.type));
 
         setPluginStatus(telegramPlugin || null);
         setLarkPluginStatus(larkPlugin || null);
         setDingtalkPluginStatus(dingtalkPlugin || null);
+        setSlackPluginStatus(slackPlugin || null);
         setExtensionStatuses(() => {
           const next: Record<string, IChannelPluginStatus> = {};
           for (const plugin of extensionPlugins) {
@@ -238,6 +244,8 @@ const ChannelModalContent: React.FC = () => {
         setLarkPluginStatus(status);
       } else if (status.type === 'dingtalk') {
         setDingtalkPluginStatus(status);
+      } else if (status.type === 'slack') {
+        setSlackPluginStatus(status);
       } else if (!BUILTIN_CHANNEL_TYPES.has(status.type)) {
         setExtensionStatuses((prev) => ({
           ...prev,
@@ -377,6 +385,45 @@ const ChannelModalContent: React.FC = () => {
       Message.error(error.message);
     } finally {
       setDingtalkEnableLoading(false);
+    }
+  };
+
+  // Enable/Disable Slack plugin
+  const handleToggleSlackPlugin = async (enabled: boolean) => {
+    setSlackEnableLoading(true);
+    try {
+      if (enabled) {
+        if (!slackPluginStatus?.hasToken) {
+          Message.warning(t('settings.slack.credentialsRequired', 'Please configure Slack credentials first'));
+          setSlackEnableLoading(false);
+          return;
+        }
+
+        const result = await channel.enablePlugin.invoke({
+          pluginId: 'slack_default',
+          config: {},
+        });
+
+        if (result.success) {
+          Message.success(t('settings.slack.pluginEnabled', 'Slack bot enabled'));
+          await loadPluginStatus();
+        } else {
+          Message.error(result.msg || t('settings.slack.enableFailed', 'Failed to enable Slack plugin'));
+        }
+      } else {
+        const result = await channel.disablePlugin.invoke({ pluginId: 'slack_default' });
+
+        if (result.success) {
+          Message.success(t('settings.slack.pluginDisabled', 'Slack bot disabled'));
+          await loadPluginStatus();
+        } else {
+          Message.error(result.msg || t('settings.slack.disableFailed', 'Failed to disable Slack plugin'));
+        }
+      }
+    } catch (error: any) {
+      Message.error(error.message);
+    } finally {
+      setSlackEnableLoading(false);
     }
   };
 
@@ -566,6 +613,18 @@ const ChannelModalContent: React.FC = () => {
       content: <DingTalkConfigForm pluginStatus={dingtalkPluginStatus} modelSelection={dingtalkModelSelection} onStatusChange={setDingtalkPluginStatus} />,
     };
 
+    const slackChannel: ChannelConfig = {
+      id: 'slack',
+      title: t('settings.channels.slackTitle', 'Slack'),
+      description: t('settings.channels.slackDesc', 'Chat with AionUi assistant via Slack'),
+      status: 'active',
+      enabled: slackPluginStatus?.enabled || false,
+      disabled: slackEnableLoading,
+      isConnected: slackPluginStatus?.connected || false,
+      defaultModel: slackModelSelection.currentModel?.useModel,
+      content: <SlackConfigForm pluginStatus={slackPluginStatus} modelSelection={slackModelSelection} onStatusChange={setSlackPluginStatus} />,
+    };
+
     const extensionChannels: ChannelConfig[] = Object.values(extensionStatuses)
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((status) => ({
@@ -584,15 +643,6 @@ const ChannelModalContent: React.FC = () => {
     const extensionTypeSet = new Set(extensionChannels.map((channel) => String(channel.id).toLowerCase()));
     const comingSoonChannels: ChannelConfig[] = [
       {
-        id: 'slack',
-        title: t('settings.channels.slackTitle', 'Slack'),
-        description: t('settings.channels.slackDesc', 'Chat with AionUi assistant via Slack'),
-        status: 'coming_soon' as const,
-        enabled: false,
-        disabled: true,
-        content: <div className='text-14px text-t-secondary py-12px'>{t('settings.channels.comingSoonDesc', 'Support for {{channel}} is coming soon', { channel: t('settings.channels.slackTitle', 'Slack') })}</div>,
-      },
-      {
         id: 'discord',
         title: t('settings.channels.discordTitle', 'Discord'),
         description: t('settings.channels.discordDesc', 'Chat with AionUi assistant via Discord'),
@@ -603,14 +653,15 @@ const ChannelModalContent: React.FC = () => {
       },
     ].filter((channel) => !extensionTypeSet.has(String(channel.id).toLowerCase()));
 
-    return [telegramChannel, larkChannel, dingtalkChannel, ...extensionChannels, ...comingSoonChannels];
-  }, [pluginStatus, larkPluginStatus, dingtalkPluginStatus, extensionStatuses, extensionLoadingMap, telegramModelSelection, larkModelSelection, dingtalkModelSelection, enableLoading, larkEnableLoading, dingtalkEnableLoading, renderExtensionConfigForm, t]);
+    return [telegramChannel, larkChannel, dingtalkChannel, slackChannel, ...extensionChannels, ...comingSoonChannels];
+  }, [pluginStatus, larkPluginStatus, dingtalkPluginStatus, slackPluginStatus, extensionStatuses, extensionLoadingMap, telegramModelSelection, larkModelSelection, dingtalkModelSelection, slackModelSelection, enableLoading, larkEnableLoading, dingtalkEnableLoading, slackEnableLoading, renderExtensionConfigForm, t]);
 
   // Get toggle handler for each channel
   const getToggleHandler = (channelId: string) => {
     if (channelId === 'telegram') return handleTogglePlugin;
     if (channelId === 'lark') return handleToggleLarkPlugin;
     if (channelId === 'dingtalk') return handleToggleDingtalkPlugin;
+    if (channelId === 'slack') return handleToggleSlackPlugin;
     if (extensionStatuses[channelId]) {
       return (enabled: boolean) => {
         void handleToggleExtensionPlugin(channelId, enabled);

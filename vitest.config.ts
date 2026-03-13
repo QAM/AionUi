@@ -65,6 +65,8 @@ export default defineConfig({
         // Renderer utils
         'src/renderer/messages/useAutoScroll.ts',
         'src/renderer/utils/emitter.ts',
+        // Channel plugins
+        'src/channels/plugins/slack/**/*.ts',
         // Extension system (only files with existing tests)
         'src/extensions/ExtensionLoader.ts',
         'src/extensions/{dependencyResolver,pathSafety,statePersistence,entryPointResolver,envResolver,fileResolver}.ts',
