@@ -1042,7 +1042,7 @@ export class AcpAgent {
     mainLog('[AcpAgent]', `handleFileOperation: method=${operation.method}, path=${operation.path}, hasContent=${!!operation.content}, hasSignalHandler=${!!this.onSignalEvent}`);
     if (operation.method === 'fs/write_text_file' && operation.content) {
       const ext = (operation.path.match(/\.(\w+)$/) || [])[1]?.toLowerCase();
-      const uploadableExtensions = ['html', 'csv', 'json', 'txt', 'svg', 'md', 'xml'];
+      const uploadableExtensions = ['html', 'csv', 'tsv', 'json', 'txt', 'svg', 'md', 'xml', 'xlsx'];
       if (ext && uploadableExtensions.includes(ext)) {
         if (this.onSignalEvent) {
           this.onSignalEvent({

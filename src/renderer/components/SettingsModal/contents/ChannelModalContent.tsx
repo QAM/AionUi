@@ -6,13 +6,14 @@
 
 import type { IChannelPluginStatus } from '@/channels/types';
 import type { IProvider, TProviderWithModel } from '@/common/storage';
+import { ipcBridge } from '@/common';
 import { channel, webui, type IWebUIStatus } from '@/common/ipcBridge';
 import { ConfigStorage } from '@/common/storage';
 import AionScrollArea from '@/renderer/components/base/AionScrollArea';
 import { useModelProviderList } from '@/renderer/hooks/useModelProviderList';
 import type { GeminiModelSelection } from '@/renderer/pages/conversation/gemini/useGeminiModelSelection';
 import { useGeminiModelSelection } from '@/renderer/pages/conversation/gemini/useGeminiModelSelection';
-import { Input, InputNumber, Message, Select, Switch } from '@arco-design/web-react';
+import { Button, Input, InputNumber, Message, Select, Switch } from '@arco-design/web-react';
 import { CheckOne } from '@icon-park/react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -140,6 +141,9 @@ const ChannelModalContent: React.FC = () => {
   const viewMode = useSettingsViewMode();
   const isPageMode = viewMode === 'page';
 
+  // Global default workspace
+  const [globalWorkspace, setGlobalWorkspace] = useState('');
+
   // Plugin state
   const [pluginStatus, setPluginStatus] = useState<IChannelPluginStatus | null>(null);
   const [larkPluginStatus, setLarkPluginStatus] = useState<IChannelPluginStatus | null>(null);
@@ -219,6 +223,9 @@ const ChannelModalContent: React.FC = () => {
   // Initial load
   useEffect(() => {
     void loadPluginStatus();
+    void ConfigStorage.get('acp.defaultChannelWorkspace').then((val) => {
+      if (typeof val === 'string') setGlobalWorkspace(val);
+    });
   }, [loadPluginStatus]);
 
   useEffect(() => {
@@ -669,6 +676,27 @@ const ChannelModalContent: React.FC = () => {
     }
     return undefined;
   };
+  const handleGlobalWorkspaceChange = async (value: string) => {
+    setGlobalWorkspace(value);
+    try {
+      await ConfigStorage.set('acp.defaultChannelWorkspace', value);
+      Message.success(t('settings.channels.workspaceSaved', 'Workspace saved'));
+    } catch {
+      Message.error(t('common.saveFailed', 'Failed to save'));
+    }
+  };
+
+  const handleBrowseGlobalWorkspace = async () => {
+    try {
+      const paths = await ipcBridge.dialog.showOpen.invoke({ properties: ['openDirectory'] });
+      if (paths && paths.length > 0) {
+        await handleGlobalWorkspaceChange(paths[0]);
+      }
+    } catch {
+      // cancelled
+    }
+  };
+
   const channelGuideText = t('settings.webui.featureChannelsDesc', { defaultValue: 'Connect Telegram, Lark, and DingTalk to interact with AionUi from IM apps.' });
   const channelSetupSteps = [t('settings.channels.selectFirst', { defaultValue: 'Select a channel and configure credentials.' }), t('settings.channels.enableAfterConfig', { defaultValue: 'Enable it and start chatting with your AI agent.' })];
 
@@ -686,6 +714,19 @@ const ChannelModalContent: React.FC = () => {
                 <span className='text-12px text-t-secondary'>{stepLabel}</span>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className='flex items-center justify-between gap-24px py-12px mt-8px'>
+          <div className='flex-1'>
+            <div className='text-14px text-t-primary'>{t('settings.channels.globalWorkspace', 'Default Channel Workspace')}</div>
+            <div className='text-12px text-t-tertiary mt-2px'>{t('settings.channels.globalWorkspaceDesc', 'Default working directory for all channel conversations. Leave empty to use a temporary directory.')}</div>
+          </div>
+          <div className='flex items-center gap-8px'>
+            <Input value={globalWorkspace} onChange={(value) => setGlobalWorkspace(value)} onBlur={() => void handleGlobalWorkspaceChange(globalWorkspace)} placeholder={t('settings.channels.workspacePlaceholder', '/path/to/your/project')} style={{ width: 240 }} />
+            <Button type='secondary' onClick={handleBrowseGlobalWorkspace}>
+              {t('settings.channels.selectFolder', 'Browse')}
+            </Button>
           </div>
         </div>
 

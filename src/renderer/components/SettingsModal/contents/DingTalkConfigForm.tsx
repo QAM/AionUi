@@ -5,6 +5,7 @@
  */
 
 import type { IChannelPairingRequest, IChannelPluginStatus, IChannelUser } from '@/channels/types';
+import { ipcBridge } from '@/common';
 import { acpConversation, channel } from '@/common/ipcBridge';
 import { ConfigStorage } from '@/common/storage';
 import { openExternalUrl } from '@/renderer/utils/platform';
@@ -74,6 +75,9 @@ const DingTalkConfigForm: React.FC<DingTalkConfigFormProps> = ({ pluginStatus, m
   const [pendingPairings, setPendingPairings] = useState<IChannelPairingRequest[]>([]);
   const [authorizedUsers, setAuthorizedUsers] = useState<IChannelUser[]>([]);
 
+  // Workspace path for this channel
+  const [workspace, setWorkspace] = useState('');
+
   // Agent selection
   const [availableAgents, setAvailableAgents] = useState<Array<{ backend: AcpBackendAll; name: string; customAgentId?: string; isPreset?: boolean }>>([]);
   const [selectedAgent, setSelectedAgent] = useState<{ backend: AcpBackendAll; name?: string; customAgentId?: string }>({ backend: 'gemini' });
@@ -114,11 +118,11 @@ const DingTalkConfigForm: React.FC<DingTalkConfigFormProps> = ({ pluginStatus, m
     void loadAuthorizedUsers();
   }, [loadPendingPairings, loadAuthorizedUsers]);
 
-  // Load available agents + saved selection
+  // Load available agents + saved selection + workspace
   useEffect(() => {
     const loadAgentsAndSelection = async () => {
       try {
-        const [agentsResp, saved] = await Promise.all([acpConversation.getAvailableAgents.invoke(), ConfigStorage.get('assistant.dingtalk.agent')]);
+        const [agentsResp, saved, savedWorkspace] = await Promise.all([acpConversation.getAvailableAgents.invoke(), ConfigStorage.get('assistant.dingtalk.agent'), ConfigStorage.get('assistant.dingtalk.workspace')]);
 
         if (agentsResp.success && agentsResp.data) {
           const list = agentsResp.data.filter((a) => !a.isPreset).map((a) => ({ backend: a.backend, name: a.name, customAgentId: a.customAgentId, isPreset: a.isPreset, isExtension: a.isExtension }));
@@ -133,6 +137,10 @@ const DingTalkConfigForm: React.FC<DingTalkConfigFormProps> = ({ pluginStatus, m
           });
         } else if (typeof saved === 'string') {
           setSelectedAgent({ backend: saved as AcpBackendAll });
+        }
+
+        if (typeof savedWorkspace === 'string') {
+          setWorkspace(savedWorkspace);
         }
       } catch (error) {
         console.error('[DingTalkConfig] Failed to load agents:', error);
@@ -314,6 +322,27 @@ const DingTalkConfigForm: React.FC<DingTalkConfigFormProps> = ({ pluginStatus, m
   };
 
   const hasExistingUsers = authorizedUsers.length > 0;
+  const handleWorkspaceChange = async (value: string) => {
+    setWorkspace(value);
+    try {
+      await ConfigStorage.set('assistant.dingtalk.workspace', value);
+      Message.success(t('settings.channels.workspaceSaved', 'Workspace saved'));
+    } catch {
+      Message.error(t('common.saveFailed', 'Failed to save'));
+    }
+  };
+
+  const handleBrowseWorkspace = async () => {
+    try {
+      const paths = await ipcBridge.dialog.showOpen.invoke({ properties: ['openDirectory'] });
+      if (paths && paths.length > 0) {
+        await handleWorkspaceChange(paths[0]);
+      }
+    } catch {
+      // cancelled
+    }
+  };
+
   const isGeminiAgent = selectedAgent.backend === 'gemini';
   const agentOptions: Array<{ backend: AcpBackendAll; name: string; customAgentId?: string; isExtension?: boolean }> = availableAgents.length > 0 ? availableAgents : [{ backend: 'gemini', name: 'Gemini CLI' }];
 
@@ -478,6 +507,16 @@ const DingTalkConfigForm: React.FC<DingTalkConfigFormProps> = ({ pluginStatus, m
       {/* Default Model Selection */}
       <PreferenceRow label={t('settings.assistant.defaultModel', 'Model')} description={t('settings.dingtalk.defaultModelDesc', 'Used for Agent conversations')}>
         <GeminiModelSelector selection={isGeminiAgent ? modelSelection : undefined} disabled={!isGeminiAgent} label={!isGeminiAgent ? t('settings.assistant.autoFollowCliModel', 'Auto-follow CLI runtime model') : undefined} variant='settings' />
+      </PreferenceRow>
+
+      {/* Workspace */}
+      <PreferenceRow label={t('settings.channels.workspace', 'Workspace')} description={t('settings.channels.workspaceDesc', 'Working directory for the AI agent. Leave empty to use global default.')}>
+        <div className='flex items-center gap-8px'>
+          <Input value={workspace} onChange={(value) => setWorkspace(value)} onBlur={() => void handleWorkspaceChange(workspace)} placeholder={t('settings.channels.workspacePlaceholder', '/path/to/your/project')} style={{ width: 240 }} />
+          <Button type='secondary' onClick={handleBrowseWorkspace}>
+            {t('settings.channels.selectFolder', 'Browse')}
+          </Button>
+        </div>
       </PreferenceRow>
 
       {/* Connection Status */}
