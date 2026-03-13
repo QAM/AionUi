@@ -395,6 +395,23 @@ export class ActionExecutor {
         const customAgentId = savedAgent && typeof savedAgent === 'object' ? ((savedAgent as any).customAgentId as string | undefined) : undefined;
         const agentName = savedAgent && typeof savedAgent === 'object' ? ((savedAgent as any).name as string | undefined) : undefined;
 
+        // Resolve workspace: per-channel override → global default → undefined (temp dir)
+        let resolvedWorkspace: string | undefined;
+        try {
+          const wsKey = `assistant.${source}.workspace` as const;
+          const perChannel = await ProcessConfig.get(wsKey as any);
+          if (typeof perChannel === 'string' && perChannel.trim()) {
+            resolvedWorkspace = perChannel.trim();
+          } else {
+            const globalDefault = await ProcessConfig.get('acp.defaultChannelWorkspace');
+            if (typeof globalDefault === 'string' && globalDefault.trim()) {
+              resolvedWorkspace = globalDefault.trim();
+            }
+          }
+        } catch {
+          // ignore — fall back to temp dir
+        }
+
         // Always resolve a provider model (required by ICreateConversationParams typing; ignored by ACP/Codex)
         const model = await getChannelDefaultModel(platform);
 
@@ -416,7 +433,7 @@ export class ActionExecutor {
                 name: conversationName,
                 source,
                 channelChatId: chatId,
-                extra: {},
+                extra: { ...(resolvedWorkspace ? { workspace: resolvedWorkspace } : {}) },
               })
             : backend === 'gemini'
               ? await ConversationService.createGeminiConversation({
@@ -424,6 +441,7 @@ export class ActionExecutor {
                   name: conversationName,
                   source,
                   channelChatId: chatId,
+                  workspace: resolvedWorkspace,
                 })
               : backend === 'openclaw-gateway'
                 ? await ConversationService.createConversation({
@@ -432,7 +450,7 @@ export class ActionExecutor {
                     name: conversationName,
                     source,
                     channelChatId: chatId,
-                    extra: {},
+                    extra: { ...(resolvedWorkspace ? { workspace: resolvedWorkspace } : {}) },
                   })
                 : await ConversationService.createConversation({
                     type: 'acp',
@@ -444,6 +462,7 @@ export class ActionExecutor {
                       backend: backend as AcpBackend,
                       customAgentId,
                       agentName,
+                      ...(resolvedWorkspace ? { workspace: resolvedWorkspace } : {}),
                     },
                   });
 
@@ -616,15 +635,25 @@ export class ActionExecutor {
             if (tool.status === 'Success' && tool.name) {
               // Check if this is a file write tool with an uploadable file
               const desc = tool.description || tool.name || '';
-              const fileMatch = desc.match(/(?:Write|write_text_file|fs\/write)\s+(.+\.(?:html|csv|json|txt|svg))/i);
+              const fileMatch = desc.match(/(?:Write|write_text_file|fs\/write)\s+(.+\.(?:html|csv|tsv|json|txt|svg|md|xml|xlsx))/i);
               if (fileMatch) {
-                const filePath = fileMatch[1].trim();
+                const rawPath = fileMatch[1].trim();
                 try {
                   const fs = await import('fs');
-                  const path = await import('path');
+                  const pathMod = await import('path');
+                  // Resolve relative paths against the conversation workspace
+                  let filePath = rawPath;
+                  if (!pathMod.isAbsolute(rawPath) && context.conversationId) {
+                    const db = getDatabase();
+                    const convResult = db.getConversation(context.conversationId);
+                    const ws = convResult.data?.extra?.workspace;
+                    if (typeof ws === 'string') {
+                      filePath = pathMod.join(ws, rawPath);
+                    }
+                  }
                   if (fs.existsSync(filePath)) {
                     const content = fs.readFileSync(filePath, 'utf-8');
-                    const filename = path.basename(filePath);
+                    const filename = pathMod.basename(filePath);
                     const slackPlugin = this.pluginManager.getPlugin('slack_default');
                     if (slackPlugin && 'uploadFile' in slackPlugin) {
                       await (slackPlugin as any).uploadFile(context.chatId, content, filename, filename);

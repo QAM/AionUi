@@ -126,6 +126,13 @@ export interface IConfigStorageRefer {
     customAgentId?: string;
     name?: string;
   };
+  // Per-channel workspace paths / 各频道工作目录
+  'assistant.telegram.workspace'?: string;
+  'assistant.lark.workspace'?: string;
+  'assistant.dingtalk.workspace'?: string;
+  'assistant.slack.workspace'?: string;
+  // Global default workspace for all channel conversations / 所有频道会话的全局默认工作目录
+  'acp.defaultChannelWorkspace'?: string;
 }
 
 export interface IEnvStorageRefer {

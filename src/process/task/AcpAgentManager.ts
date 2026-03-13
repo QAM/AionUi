@@ -464,6 +464,7 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
                 confirmationDetails.toolName = toolTitle;
               }
 
+              mainLog('[AcpAgentManager]', `emitting tool_group Confirming for convId=${this.conversation_id}, callId=${toolCall.toolCallId || v.msg_id}, listenerCount=${channelEventBus.listenerCount('channel.agent.message')}`);
               channelEventBus.emitAgentMessage(this.conversation_id, {
                 type: 'tool_group',
                 conversation_id: this.conversation_id,
@@ -480,11 +481,12 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
                   },
                 ],
               });
+              mainLog('[AcpAgentManager]', `tool_group Confirming emitted successfully`);
 
               // Track file paths from permissions for upload after turn completes.
               // Matches: "Write /path/file.html", 'open "/path/file.html"', 'open /path/file.html'
               if (toolTitle) {
-                const filePathMatch = toolTitle.match(/(?:^Write\s+|^open\s+["']?)(.+\.(?:html|csv|json|txt|svg|md|xml))["']?$/i);
+                const filePathMatch = toolTitle.match(/(?:^Write\s+|^open\s+["']?)(.+\.(?:html|csv|tsv|json|txt|svg|md|xml|xlsx))["']?$/i);
                 if (filePathMatch) {
                   const filePath = filePathMatch[1].trim();
                   if (!this.pendingSlackFileUploads.includes(filePath)) {
@@ -532,8 +534,10 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
             if (this.pendingSlackFileUploads.length > 0) {
               const filesToUpload = [...this.pendingSlackFileUploads];
               this.pendingSlackFileUploads = [];
-              for (const filePath of filesToUpload) {
+              for (const rawPath of filesToUpload) {
                 try {
+                  // Resolve relative paths against conversation workspace
+                  const filePath = pathMod.isAbsolute(rawPath) ? rawPath : pathMod.join(this.workspace, rawPath);
                   if (fs.existsSync(filePath)) {
                     const content = fs.readFileSync(filePath, 'utf-8');
                     const filename = pathMod.basename(filePath);
@@ -545,9 +549,11 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
                       data: { content, contentType: ext, title: filename },
                     });
                     mainLog('[AcpAgentManager]', `file_upload emitted for Slack: ${filename}`);
+                  } else {
+                    mainWarn('[AcpAgentManager]', `Pending Slack file not found: ${filePath} (raw: ${rawPath}, workspace: ${this.workspace})`);
                   }
                 } catch (err) {
-                  mainWarn('[AcpAgentManager]', `Failed to read file for Slack upload: ${filePath}`, err);
+                  mainWarn('[AcpAgentManager]', `Failed to read file for Slack upload: ${rawPath}`, err);
                 }
               }
             }
