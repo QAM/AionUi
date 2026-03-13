@@ -741,10 +741,12 @@ export class AcpAgent {
   }
 
   confirmMessage(data: { confirmKey: string; callId: string }): Promise<AcpResult> {
+    mainLog('[AcpAgent]', `confirmMessage: callId=${data.callId}, confirmKey=${data.confirmKey}, pendingKeys=[${[...this.pendingPermissions.keys()].join(',')}]`);
     try {
       if (this.pendingPermissions.has(data.callId)) {
         const { resolve } = this.pendingPermissions.get(data.callId)!;
         this.pendingPermissions.delete(data.callId);
+        mainLog('[AcpAgent]', `confirmMessage: FOUND pending permission, resolving with optionId=${data.confirmKey}`);
 
         // Store "allow_always" decision to ApprovalStore for future auto-approval
         // Workaround for claude-agent-acp bug: it returns updatedPermissions but doesn't check suggestions
@@ -951,7 +953,7 @@ export class AcpAgent {
           this.pendingPermissions.delete(requestId);
           reject(new Error('Permission request timed out'));
         }
-      }, 70000);
+      }, 600000); // 10 minutes — allows time for external confirmations (e.g., Slack buttons)
     });
   }
 
@@ -1035,6 +1037,28 @@ export class AcpAgent {
     };
 
     this.emitMessage(fileOperationMessage);
+
+    // Emit file_write signal for uploadable files so AcpAgentManager can forward to channels (e.g., Slack)
+    mainLog('[AcpAgent]', `handleFileOperation: method=${operation.method}, path=${operation.path}, hasContent=${!!operation.content}, hasSignalHandler=${!!this.onSignalEvent}`);
+    if (operation.method === 'fs/write_text_file' && operation.content) {
+      const ext = (operation.path.match(/\.(\w+)$/) || [])[1]?.toLowerCase();
+      const uploadableExtensions = ['html', 'csv', 'json', 'txt', 'svg', 'md', 'xml'];
+      if (ext && uploadableExtensions.includes(ext)) {
+        if (this.onSignalEvent) {
+          this.onSignalEvent({
+            type: 'file_write',
+            conversation_id: this.id,
+            msg_id: uuid(),
+            data: {
+              path: operation.path,
+              content: operation.content,
+              contentType: ext,
+              title: path.basename(operation.path),
+            },
+          });
+        }
+      }
+    }
   }
 
   private formatFileOperationMessage(operation: { method: string; path: string; content?: string; sessionId: string }): string {

@@ -23,9 +23,12 @@ import { createMainMenuCard as createDingTalkMainMenuCard, createErrorRecoveryCa
 import { convertHtmlToDingTalkMarkdown } from '../plugins/dingtalk/DingTalkAdapter';
 import { createMainMenuKeyboard, createToolConfirmationKeyboard } from '../plugins/telegram/TelegramKeyboards';
 import { escapeHtml } from '../plugins/telegram/TelegramAdapter';
+import { createMainMenuBlocks as createSlackMainMenuBlocks, createErrorRecoveryBlocks as createSlackErrorRecoveryBlocks, createToolConfirmationBlocks as createSlackToolConfirmationBlocks } from '../plugins/slack/SlackBlocks';
+import { convertHtmlToSlackMarkdown } from '../plugins/slack/SlackAdapter';
 import type { ChannelAgentType, IUnifiedIncomingMessage, IUnifiedOutgoingMessage, PluginType } from '../types';
 import type { PluginManager } from './PluginManager';
 import type { AcpBackend } from '@/types/acpTypes';
+import { mainLog } from '@/process/utils/mainLogger';
 
 // ==================== Platform-specific Helpers ====================
 
@@ -38,6 +41,9 @@ function getMainMenuMarkup(platform: PluginType) {
   }
   if (platform === 'dingtalk') {
     return createDingTalkMainMenuCard();
+  }
+  if (platform === 'slack') {
+    return createSlackMainMenuBlocks();
   }
   return createMainMenuKeyboard();
 }
@@ -63,6 +69,9 @@ function getToolConfirmationMarkup(platform: PluginType, callId: string, options
   if (platform === 'dingtalk') {
     return createDingTalkToolConfirmationCard(callId, title || 'Confirmation', description || 'Please confirm', options);
   }
+  if (platform === 'slack') {
+    return createSlackToolConfirmationBlocks(callId, options, title || 'Confirmation', description || 'Please confirm');
+  }
   return createToolConfirmationKeyboard(callId, options);
 }
 
@@ -76,6 +85,9 @@ function getErrorRecoveryMarkup(platform: PluginType, errorMessage?: string) {
   if (platform === 'dingtalk') {
     return createDingTalkErrorRecoveryCard(errorMessage);
   }
+  if (platform === 'slack') {
+    return createSlackErrorRecoveryBlocks(errorMessage);
+  }
   return createMainMenuKeyboard(); // Telegram uses main menu for recovery
 }
 
@@ -88,6 +100,9 @@ function formatTextForPlatform(text: string, platform: PluginType): string {
   }
   if (platform === 'dingtalk') {
     return convertHtmlToDingTalkMarkdown(text);
+  }
+  if (platform === 'slack') {
+    return convertHtmlToSlackMarkdown(text);
   }
   return escapeHtml(text);
 }
@@ -143,8 +158,11 @@ function getConfirmationPrompt(details: { type: string; title?: string; [key: st
       return `🔧 <b>MCP Tool Confirmation</b>\nTool: <code>${escapeHtml(details.toolDisplayName || details.toolName || 'Unknown tool')}</code>\nServer: <code>${escapeHtml(details.serverName || 'Unknown server')}</code>\n\nAllow calling this tool?`;
     case 'info':
       return `ℹ️ <b>Information Confirmation</b>\n${escapeHtml(details.prompt || '')}\n\nContinue?`;
-    default:
-      return 'Please confirm the operation';
+    default: {
+      const toolInfo = details.toolName ? `\nTool: <code>${escapeHtml(details.toolName)}</code>` : '';
+      const msgInfo = details.message && details.message !== 'The agent is requesting permission.' ? `\n${escapeHtml(details.message)}` : '';
+      return `🔐 <b>Permission Request</b>${toolInfo}${msgInfo}\n\nAllow this operation?`;
+    }
   }
 }
 
@@ -190,9 +208,16 @@ function convertTMessageToOutgoing(message: TMessage, platform: PluginType, isCo
       // Check if there are tools that need confirmation
       const confirmingTool = message.content.find((tool) => tool.status === 'Confirming' && tool.confirmationDetails);
       if (confirmingTool && confirmingTool.confirmationDetails) {
-        // 根据确认类型生成选项
-        // Generate options based on confirmation type
-        const options = getConfirmationOptions(confirmingTool.confirmationDetails.type);
+        // For Slack: use actual ACP option IDs so the backend accepts the response.
+        // Other platforms use hardcoded generic options since they auto-approve via yoloMode.
+        const acpOptions = (confirmingTool.confirmationDetails as Record<string, unknown>).acpOptions as Array<{ optionId: string; name: string; kind: string }> | undefined;
+        const options =
+          platform === 'slack' && acpOptions
+            ? acpOptions.map((opt) => ({
+                label: opt.kind.includes('reject') ? `❌ ${opt.name}` : `✅ ${opt.name}`,
+                value: opt.optionId,
+              }))
+            : getConfirmationOptions(confirmingTool.confirmationDetails.type);
         const confirmText = toolLines.join('\n') + '\n\n' + getConfirmationPrompt(confirmingTool.confirmationDetails);
 
         return {
@@ -216,6 +241,19 @@ function convertTMessageToOutgoing(message: TMessage, platform: PluginType, isCo
       return {
         type: 'text',
         text: `${statusIcon} ${name}`,
+        parseMode: 'HTML',
+      };
+    }
+
+    case 'acp_tool_call': {
+      // Show tool execution status in Slack
+      const tcUpdate = (message.content as any)?.update;
+      const tcStatus = tcUpdate?.status || 'in_progress';
+      const tcIcon = tcStatus === 'completed' ? '✅' : tcStatus === 'failed' ? '❌' : '⏳';
+      const tcName = formatTextForPlatform(tcUpdate?.title || 'Tool', platform);
+      return {
+        type: 'text',
+        text: `${tcIcon} ${tcName}`,
         parseMode: 'HTML',
       };
     }
@@ -344,12 +382,12 @@ export class ActionExecutor {
       // Get or create session (scoped by chatId for per-chat isolation)
       let session = this.sessionManager.getSession(channelUser.id, chatId);
       if (!session || !session.conversationId) {
-        const source = platform === 'lark' ? 'lark' : platform === 'dingtalk' ? 'dingtalk' : 'telegram';
+        const source = platform === 'lark' ? 'lark' : platform === 'dingtalk' ? 'dingtalk' : platform === 'slack' ? 'slack' : 'telegram';
 
         // Read selected agent for this platform (defaults to Gemini)
         let savedAgent: unknown = undefined;
         try {
-          savedAgent = await (platform === 'lark' ? ProcessConfig.get('assistant.lark.agent') : platform === 'dingtalk' ? ProcessConfig.get('assistant.dingtalk.agent') : ProcessConfig.get('assistant.telegram.agent'));
+          savedAgent = await (platform === 'lark' ? ProcessConfig.get('assistant.lark.agent') : platform === 'dingtalk' ? ProcessConfig.get('assistant.dingtalk.agent') : platform === 'slack' ? ProcessConfig.get('assistant.slack.agent') : ProcessConfig.get('assistant.telegram.agent'));
         } catch {
           // ignore
         }
@@ -528,6 +566,9 @@ export class ActionExecutor {
       // Track last message content for adding action buttons after stream ends
       let lastMessageContent: IUnifiedOutgoingMessage | null = null;
 
+      // Track whether the last Slack message has confirmation buttons (avoid overwriting)
+      let slackAwaitingConfirmation = false;
+
       // 执行消息编辑的函数
       // Function to perform message edit
       const doEditMessage = async (msg: IUnifiedOutgoingMessage) => {
@@ -545,6 +586,70 @@ export class ActionExecutor {
       await messageService.sendMessage(sessionId, conversationId, text, async (message: TMessage, isInsert: boolean) => {
         const now = Date.now();
 
+        // Debug: log every message arriving in the Slack stream callback
+        if (context.platform === 'slack') {
+          const confirmingInfo = message.type === 'tool_group' ? `, confirming=${message.content.some((t: any) => t.status === 'Confirming')}` : '';
+          mainLog('[ActionExecutor:Slack]', `stream msg: type=${message.type}, insert=${isInsert}, awaitingConfirm=${slackAwaitingConfirmation}${confirmingInfo}`);
+        }
+
+        // Handle file uploads for Slack (HTML previews, generated files)
+        if (context.platform === 'slack' && (message as any)._fileUpload) {
+          const fileData = (message as any)._fileUpload as { content?: string; contentType?: string; title?: string };
+          try {
+            const slackPlugin = this.pluginManager.getPlugin('slack_default');
+            if (slackPlugin && 'uploadFile' in slackPlugin && fileData.content) {
+              // Use title as filename (already includes extension from path.basename)
+              const filename = fileData.title || `generated-file.${fileData.contentType || 'txt'}`;
+              await (slackPlugin as any).uploadFile(context.chatId, fileData.content, filename, fileData.title || filename);
+              console.log(`[ActionExecutor] Uploaded file to Slack: ${filename}`);
+            }
+          } catch (err) {
+            console.error('[ActionExecutor] Failed to upload file to Slack:', err);
+          }
+          return;
+        }
+
+        // Detect completed file writes for Slack and upload the file
+        if (context.platform === 'slack' && message.type === 'tool_group') {
+          for (const tool of message.content) {
+            console.log(`[ActionExecutor] Slack tool_group item: name=${tool.name}, status=${tool.status}, desc=${(tool.description || '').slice(0, 200)}`);
+            if (tool.status === 'Success' && tool.name) {
+              // Check if this is a file write tool with an uploadable file
+              const desc = tool.description || tool.name || '';
+              const fileMatch = desc.match(/(?:Write|write_text_file|fs\/write)\s+(.+\.(?:html|csv|json|txt|svg))/i);
+              if (fileMatch) {
+                const filePath = fileMatch[1].trim();
+                try {
+                  const fs = await import('fs');
+                  const path = await import('path');
+                  if (fs.existsSync(filePath)) {
+                    const content = fs.readFileSync(filePath, 'utf-8');
+                    const filename = path.basename(filePath);
+                    const slackPlugin = this.pluginManager.getPlugin('slack_default');
+                    if (slackPlugin && 'uploadFile' in slackPlugin) {
+                      await (slackPlugin as any).uploadFile(context.chatId, content, filename, filename);
+                    }
+                  }
+                } catch (err) {
+                  console.error('[ActionExecutor] Failed to upload written file to Slack:', err);
+                }
+              }
+            }
+          }
+        }
+
+        // For Slack: skip acp_tool_call updates while confirmation buttons are displayed,
+        // otherwise they overwrite the buttons via message edit.
+        // For Slack: skip acp_tool_call updates while confirmation buttons are displayed.
+        // But allow tool_group (new confirmations) and other message types through.
+        if (context.platform === 'slack' && slackAwaitingConfirmation) {
+          if (message.type === 'acp_tool_call') {
+            return;
+          }
+          // A new message type arrived (e.g., new confirmation, text response) — clear the flag
+          slackAwaitingConfirmation = false;
+        }
+
         // 转换消息格式（根据平台）
         // Convert message format (based on platform)
         const outgoingMessage = convertTMessageToOutgoing(message, context.platform as PluginType, false);
@@ -553,11 +658,23 @@ export class ActionExecutor {
         // Tool confirmation cards set replyMarkup (e.g., for Confirming status),
         // but DingTalk interprets replyMarkup as "stream complete" and finishes the AI Card.
         // Channel conversations use yoloMode (auto-approve), so confirmation buttons are unnecessary.
-        const streamOutgoing: IUnifiedOutgoingMessage = { ...outgoingMessage, replyMarkup: undefined };
+        // Exception: Slack uses interactive confirmations (not yoloMode), so keep replyMarkup for Slack.
+        const shouldKeepMarkup = context.platform === 'slack' && outgoingMessage.replyMarkup;
+
+        // Track Slack confirmation state
+        if (context.platform === 'slack') {
+          if (shouldKeepMarkup) {
+            slackAwaitingConfirmation = true;
+          } else if (slackAwaitingConfirmation && message.type !== 'acp_tool_call') {
+            // A non-tool-call message arrived (e.g., text response after user confirmed) — clear the flag
+            slackAwaitingConfirmation = false;
+          }
+        }
+        const streamOutgoing: IUnifiedOutgoingMessage = shouldKeepMarkup ? outgoingMessage : { ...outgoingMessage, replyMarkup: undefined };
 
         // 保存最后一条消息内容（不含 replyMarkup，最终消息会单独添加）
         // Save last message content (without replyMarkup, final message adds it separately)
-        lastMessageContent = streamOutgoing;
+        lastMessageContent = shouldKeepMarkup ? outgoingMessage : streamOutgoing;
 
         // IMPORTANT: Always treat first streaming message as update to thinking message
         // This prevents async race condition where first insert's sendMessage takes time

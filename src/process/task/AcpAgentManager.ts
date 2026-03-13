@@ -24,6 +24,8 @@ import BaseAgentManager from './BaseAgentManager';
 import { hasCronCommands } from './CronCommandDetector';
 import { extractTextFromMessage, processCronInMessage } from './MessageMiddleware';
 import { stripThinkTags } from './ThinkTagDetector';
+import fs from 'fs';
+import pathMod from 'path';
 
 interface AcpAgentManagerData {
   workspace?: string;
@@ -71,6 +73,8 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
   private acpAvailableSlashWaiters: Array<(commands: SlashCommandItem[]) => void> = [];
   private readonly streamDbFlushIntervalMs = 120;
   private readonly bufferedStreamTextMessages = new Map<string, BufferedStreamTextMessage>();
+  // Track file paths from approved Write permissions for Slack file upload on turn end
+  private pendingSlackFileUploads: string[] = [];
 
   constructor(data: AcpAgentManagerData) {
     super('acp', data);
@@ -295,8 +299,29 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
 
           // Handle preview_open event (chrome-devtools navigation interception)
           // 处理 preview_open 事件（chrome-devtools 导航拦截）
-          if (handlePreviewOpenEvent(message)) {
-            return; // Don't process further / 不需要继续处理
+          if (message.type === 'preview_open') {
+            mainLog('[AcpAgentManager]', `preview_open received, data=${JSON.stringify(message.data).slice(0, 200)}`);
+            // For Slack conversations, forward the file to the channel instead of opening locally
+            const previewConvDb = getDatabase().getConversation(this.conversation_id);
+            if (previewConvDb.success && previewConvDb.data?.source === 'slack') {
+              const previewData = message.data as { content?: string; contentType?: string; metadata?: { title?: string } } | undefined;
+              if (previewData?.content) {
+                channelEventBus.emitAgentMessage(this.conversation_id, {
+                  type: 'file_upload',
+                  conversation_id: this.conversation_id,
+                  msg_id: message.msg_id || uuid(),
+                  data: {
+                    content: previewData.content,
+                    contentType: previewData.contentType || 'html',
+                    title: previewData.metadata?.title,
+                  },
+                });
+              }
+              return;
+            }
+            if (handlePreviewOpenEvent(message)) {
+              return; // Don't process further / 不需要继续处理
+            }
           }
 
           // Mark as finished when content is output (visible to user)
@@ -408,20 +433,124 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
               })),
             });
 
-            // Channels (Telegram/Lark) currently don't have interactive permission UX.
-            // Emit a readable error to avoid "silent hang" in external platforms.
-            channelEventBus.emitAgentMessage(this.conversation_id, {
-              type: 'error',
-              conversation_id: this.conversation_id,
-              msg_id: v.msg_id,
-              data: 'Permission required. Please open AionUi and confirm the pending request in the conversation panel.',
-            });
+            // Check if conversation is from Slack (supports interactive permission via Block Kit buttons)
+            const convDb = getDatabase().getConversation(this.conversation_id);
+            const convSource = convDb.data?.source;
+            const isSlackConversation = convDb.success && convSource === 'slack';
+            mainLog('[AcpAgentManager]', `acp_permission: convId=${this.conversation_id}, source=${convSource}, isSlack=${isSlackConversation}, toolKind=${toolCall.kind}, toolTitle=${toolCall.title}`);
+
+            if (isSlackConversation) {
+              // Slack: emit a tool_group message so ActionExecutor renders Block Kit confirmation buttons.
+              // Map ACP toolCall.kind to confirmationDetails type for proper button labels.
+              const kind = toolCall.kind || 'default';
+              const toolTitle = toolCall.title || '';
+              const isMcpTool = kind === 'mcp' || (kind === 'other' && toolTitle.includes('mcp__'));
+              const confirmationType = kind === 'bash' || kind === 'command' || kind === 'execute' ? 'exec' : isMcpTool ? 'mcp' : kind === 'edit' || kind === 'write' ? 'edit' : 'default';
+              const confirmationDetails: Record<string, unknown> = { type: confirmationType, message: toolCall.rawInput?.description || toolTitle || 'The agent is requesting permission.', acpOptions: options };
+
+              // Add type-specific fields for proper prompt rendering
+              if (confirmationType === 'exec') {
+                confirmationDetails.command = toolCall.rawInput?.command || toolTitle || 'Unknown command';
+                confirmationDetails.rootCommand = toolCall.rawInput?.command || '';
+              } else if (confirmationType === 'mcp') {
+                confirmationDetails.toolName = toolTitle || 'Unknown tool';
+                confirmationDetails.toolDisplayName = toolTitle || 'Unknown tool';
+                confirmationDetails.serverName = (toolCall.rawInput as any)?.serverName || '';
+              } else if (confirmationType === 'edit') {
+                confirmationDetails.fileName = (toolCall.rawInput as any)?.path || toolTitle || 'Unknown file';
+                confirmationDetails.fileDiff = '';
+              } else {
+                // Default: include tool title so Slack shows what the permission is for
+                confirmationDetails.toolName = toolTitle;
+              }
+
+              channelEventBus.emitAgentMessage(this.conversation_id, {
+                type: 'tool_group',
+                conversation_id: this.conversation_id,
+                msg_id: v.msg_id,
+                data: [
+                  {
+                    id: toolCall.toolCallId || v.msg_id,
+                    callId: toolCall.toolCallId || v.msg_id,
+                    name: toolCall.title || 'Permission Request',
+                    description: toolCall.rawInput?.description || 'The agent is requesting permission.',
+                    renderOutputAsMarkdown: false,
+                    status: 'Confirming',
+                    confirmationDetails,
+                  },
+                ],
+              });
+
+              // Track file paths from permissions for upload after turn completes.
+              // Matches: "Write /path/file.html", 'open "/path/file.html"', 'open /path/file.html'
+              if (toolTitle) {
+                const filePathMatch = toolTitle.match(/(?:^Write\s+|^open\s+["']?)(.+\.(?:html|csv|json|txt|svg|md|xml))["']?$/i);
+                if (filePathMatch) {
+                  const filePath = filePathMatch[1].trim();
+                  if (!this.pendingSlackFileUploads.includes(filePath)) {
+                    this.pendingSlackFileUploads.push(filePath);
+                  }
+                }
+              }
+            } else {
+              // Other channels (Telegram/Lark/DingTalk) use yoloMode — emit a readable error to avoid silent hang.
+              channelEventBus.emitAgentMessage(this.conversation_id, {
+                type: 'error',
+                conversation_id: this.conversation_id,
+                msg_id: v.msg_id,
+                data: 'Permission required. Please open AionUi and confirm the pending request in the conversation panel.',
+              });
+            }
+            return;
+          }
+
+          // Forward file writes to Slack as file_upload events
+          if (v.type === 'file_write') {
+            const convDb = getDatabase().getConversation(this.conversation_id);
+            if (convDb.success && convDb.data?.source === 'slack') {
+              const fileData = v.data as { content: string; contentType: string; title: string };
+              channelEventBus.emitAgentMessage(this.conversation_id, {
+                type: 'file_upload',
+                conversation_id: this.conversation_id,
+                msg_id: v.msg_id,
+                data: {
+                  content: fileData.content,
+                  contentType: fileData.contentType,
+                  title: fileData.title,
+                },
+              });
+              mainLog('[AcpAgentManager]', `file_upload emitted for Slack: ${fileData.title}`);
+            }
             return;
           }
 
           // Clear busy guard when turn ends
           if (v.type === 'finish') {
             cronBusyGuard.setProcessing(this.conversation_id, false);
+
+            // Upload pending files to Slack after turn completes
+            if (this.pendingSlackFileUploads.length > 0) {
+              const filesToUpload = [...this.pendingSlackFileUploads];
+              this.pendingSlackFileUploads = [];
+              for (const filePath of filesToUpload) {
+                try {
+                  if (fs.existsSync(filePath)) {
+                    const content = fs.readFileSync(filePath, 'utf-8');
+                    const filename = pathMod.basename(filePath);
+                    const ext = (filename.match(/\.(\w+)$/) || [])[1] || 'txt';
+                    channelEventBus.emitAgentMessage(this.conversation_id, {
+                      type: 'file_upload',
+                      conversation_id: this.conversation_id,
+                      msg_id: uuid(),
+                      data: { content, contentType: ext, title: filename },
+                    });
+                    mainLog('[AcpAgentManager]', `file_upload emitted for Slack: ${filename}`);
+                  }
+                } catch (err) {
+                  mainWarn('[AcpAgentManager]', `Failed to read file for Slack upload: ${filePath}`, err);
+                }
+              }
+            }
           }
 
           // Process cron commands when turn ends (finish signal)
@@ -682,6 +811,7 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
   }
 
   async confirm(id: string, callId: string, data: AcpPermissionOption) {
+    mainLog('[AcpAgentManager]', `confirm: id=${id}, callId=${callId}, optionId=${data.optionId}, kind=${data.kind}`);
     super.confirm(id, callId, data);
     await this.bootstrap;
     void this.agent.confirmMessage({

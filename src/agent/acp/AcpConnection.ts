@@ -13,7 +13,7 @@ import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 import { buildAcpModelInfo, summarizeAcpModelInfo } from './modelInfo';
-import { mainLog } from '@process/utils/mainLogger';
+import { mainLog, mainError } from '@process/utils/mainLogger';
 import { resolveNpxPath } from '@process/utils/shellEnv';
 import { ACP_PERF_LOG, connectClaude, connectCodebuddy, connectCodex, prepareCleanEnv, spawnGenericBackend } from './acpConnectors';
 import type { SpawnResult } from './acpConnectors';
@@ -640,6 +640,7 @@ export class AcpConnection {
       // 根据用户的选择决定outcome
       const optionId = response.optionId;
       const outcome = optionId.includes('reject') ? 'rejected' : 'selected';
+      mainLog('[AcpConnection]', `handlePermissionRequest resolved: optionId=${optionId}, outcome=${outcome}`);
 
       return {
         outcome: {
@@ -649,7 +650,7 @@ export class AcpConnection {
       };
     } catch (error) {
       // 处理超时或其他错误情况，默认拒绝
-      console.error('Permission request failed:', error);
+      mainError('[AcpConnection]', `handlePermissionRequest REJECTED (timeout or error): ${error instanceof Error ? error.message : String(error)}`);
       return {
         outcome: {
           outcome: 'rejected',

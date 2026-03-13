@@ -13,6 +13,7 @@ import { PluginManager, registerPlugin } from '../gateway/PluginManager';
 import { PairingService } from '../pairing/PairingService';
 import { DingTalkPlugin } from '../plugins/dingtalk/DingTalkPlugin';
 import { LarkPlugin } from '../plugins/lark/LarkPlugin';
+import { SlackPlugin } from '../plugins/slack/SlackPlugin';
 import { TelegramPlugin } from '../plugins/telegram/TelegramPlugin';
 import { isBuiltinChannelPlatform, resolveChannelConvType } from '../types';
 import type { ChannelPlatform, IChannelPluginConfig, PluginType } from '../types';
@@ -50,6 +51,7 @@ export class ChannelManager {
     registerPlugin('telegram', TelegramPlugin);
     registerPlugin('lark', LarkPlugin);
     registerPlugin('dingtalk', DingTalkPlugin);
+    registerPlugin('slack', SlackPlugin);
   }
 
   /**
@@ -88,7 +90,7 @@ export class ChannelManager {
 
       // Set confirm handler for tool confirmations
       // 设置工具确认处理器
-      this.pluginManager.setConfirmHandler(async (userId: string, platform: string, callId: string, value: string) => {
+      this.pluginManager.setConfirmHandler(async (userId: string, platform: string, callId: string, value: string, chatId?: string) => {
         // 查找用户
         // Find user
         const db = getDatabase();
@@ -99,10 +101,10 @@ export class ChannelManager {
         }
 
         // 查找 session 获取 conversationId
-        // Find session to get conversationId
-        const session = this.sessionManager?.getSession(userResult.data.id);
+        // Find session to get conversationId (use chatId for thread-scoped sessions like Slack)
+        const session = this.sessionManager?.getSession(userResult.data.id, chatId);
         if (!session?.conversationId) {
-          console.error(`[ChannelManager] Session not found for user: ${userResult.data.id}`);
+          console.error(`[ChannelManager] Session not found for user: ${userResult.data.id}, chatId: ${chatId}`);
           return;
         }
 
@@ -180,7 +182,7 @@ export class ChannelManager {
     }
 
     const enabledPlugins = result.data.filter((p) => p.enabled);
-    const builtinStartableTypes = new Set<PluginType>(['telegram', 'lark', 'dingtalk']);
+    const builtinStartableTypes = new Set<PluginType>(['telegram', 'lark', 'dingtalk', 'slack']);
     const extensionRegistry = ExtensionRegistry.getInstance();
 
     for (const plugin of enabledPlugins) {
@@ -262,6 +264,12 @@ export class ChannelManager {
       const clientSecret = config.clientSecret as string | undefined;
       if (clientId && clientSecret) {
         credentials = { clientId, clientSecret };
+      }
+    } else if (pluginType === 'slack') {
+      const botToken = config.botToken as string | undefined;
+      const appToken = config.appToken as string | undefined;
+      if (botToken && appToken) {
+        credentials = { botToken, appToken };
       }
     } else {
       // Extension or unknown plugin type:
@@ -416,6 +424,19 @@ export class ChannelManager {
       };
     }
 
+    if (pluginType === 'slack') {
+      // token = botToken, extraConfig?.appId = appToken (reuse field)
+      if (!token) {
+        return { success: false, error: 'Bot Token is required for Slack' };
+      }
+      const result = await SlackPlugin.testConnection(token);
+      return {
+        success: result.success,
+        botUsername: result.botInfo?.name,
+        error: result.error,
+      };
+    }
+
     // Extension plugins: test connection not supported yet (will be handled by the plugin itself on start)
     return { success: true, botUsername: undefined, error: undefined };
   }
@@ -495,7 +516,7 @@ export class ChannelManager {
       // For gemini + model info: update existing conversations' model field
       if (newType === 'gemini' && model?.id && model?.useModel) {
         if (isBuiltinChannelPlatform(platform)) {
-          const builtinPlatform: 'telegram' | 'lark' | 'dingtalk' = platform;
+          const builtinPlatform: 'telegram' | 'lark' | 'dingtalk' | 'slack' = platform;
           const fullModel = await getChannelDefaultModel(builtinPlatform);
           const db = getDatabase();
           const result = db.updateChannelConversationModel(builtinPlatform, 'gemini', fullModel);

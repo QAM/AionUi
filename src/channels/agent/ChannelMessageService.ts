@@ -113,6 +113,26 @@ export class ChannelMessageService {
       return;
     }
 
+    // Handle file_upload events (Slack file sharing)
+    console.log(`[ChannelMessageService] handleAgentMessage: type=${event.type}, convId=${conversationId}`);
+    if (event.type === 'file_upload') {
+      console.log(`[ChannelMessageService] file_upload event received, data keys: ${Object.keys(event.data || {}).join(',')}`);
+
+      const fileData = event.data as { content?: string; contentType?: string; title?: string } | undefined;
+      if (fileData) {
+        const fileTipMessage: TMessage = {
+          type: 'tips',
+          id: event.msg_id || 'file-upload',
+          msg_id: event.msg_id || 'file-upload',
+          conversation_id: conversationId,
+          content: { type: 'info', content: `📎 File: ${fileData.title || 'Generated file'}` },
+          _fileUpload: fileData,
+        } as any;
+        stream.callback(fileTipMessage, true);
+      }
+      return;
+    }
+
     // 转换消息
     // Transform message
     const message = transformMessage(event);
@@ -266,9 +286,19 @@ export class ChannelMessageService {
         throw new Error(`Task not found for conversation ${conversationId}`);
       }
 
-      // 调用 agent 的 confirm 方法
-      // Call agent's confirm method
-      task.confirm(conversationId, callId, value);
+      // Map Slack/channel button values to AcpPermissionOption format.
+      // Channel buttons use values like 'proceed_once', 'proceed_always', 'cancel'.
+      // ACP agents expect { optionId, name, kind } objects.
+      const optionMap: Record<string, { optionId: string; name: string; kind: string }> = {
+        proceed_once: { optionId: 'allow_once', name: 'Allow Once', kind: 'allow_once' },
+        proceed_always: { optionId: 'allow_always', name: 'Always Allow', kind: 'allow_always' },
+        proceed_always_tool: { optionId: 'allow_always', name: 'Always Allow Tool', kind: 'allow_always' },
+        proceed_always_server: { optionId: 'allow_always', name: 'Always Allow Server', kind: 'allow_always' },
+        cancel: { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' },
+      };
+      const confirmData = optionMap[value] || { optionId: value, name: value, kind: value };
+
+      task.confirm(conversationId, callId, confirmData);
     } catch (error) {
       console.error(`[ChannelMessageService] Failed to confirm tool call:`, error);
       throw error;
