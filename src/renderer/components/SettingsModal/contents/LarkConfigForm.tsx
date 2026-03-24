@@ -636,7 +636,7 @@ const LarkConfigForm: React.FC<LarkConfigFormProps> = ({ pluginStatus, modelSele
       )}
 
       {/* Pending Pairings */}
-      {pluginStatus?.enabled && authorizedUsers.length === 0 && (
+      {pluginStatus?.enabled && (pendingPairings.length > 0 || authorizedUsers.length === 0) && (
         <div className='bg-fill-1 rd-12px pt-16px pr-16px pb-16px pl-0'>
           <SectionHeader
             title={t('settings.assistant.pendingPairings', 'Pending Pairing Requests')}
