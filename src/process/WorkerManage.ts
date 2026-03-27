@@ -133,6 +133,10 @@ const getTaskByIdRollbackBuild = async (id: string, options?: BuildConversationO
     const task = taskList.find((item) => item.id === id)?.task;
     if (task) {
       console.log(`[WorkerManage] Found existing task in memory for: ${id}`);
+      // Apply yoloMode to cached task if requested (e.g., Slack channel conversations)
+      if (options?.yoloMode) {
+        void task.ensureYoloMode();
+      }
       return Promise.resolve(task);
     }
   }
