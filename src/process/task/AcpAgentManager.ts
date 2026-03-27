@@ -433,6 +433,11 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
               })),
             });
 
+            // When yoloMode is active, addConfirmation already auto-approved — skip channel UI
+            if (this.yoloMode) {
+              return;
+            }
+
             // Check if conversation is from Slack (supports interactive permission via Block Kit buttons)
             const convDb = getDatabase().getConversation(this.conversation_id);
             const convSource = convDb.data?.source;
@@ -867,6 +872,7 @@ class AcpAgentManager extends BaseAgentManager<AcpAgentManagerData, AcpPermissio
       return true;
     }
     this.options.yoloMode = true;
+    this.yoloMode = true;
     if (this.agent?.isConnected && this.agent?.hasActiveSession) {
       try {
         await this.agent.enableYoloMode();
